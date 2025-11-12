@@ -125,26 +125,13 @@ export const onPujaseraTransactionCreate = onDocumentCreated("stores/{pujaseraId
             itemsByTenant[item.storeId].push(item);
         }
 
-        // Fetch all tenants' data in parallel to get their current transaction counters
-        const tenantRefs = Object.keys(itemsByTenant).map(tenantId => db.doc(`stores/${tenantId}`));
-        const tenantDocs = await db.getAll(...tenantRefs);
-        const tenantDataMap = new Map(tenantDocs.map(doc => [doc.id, doc.data()]));
-
         // Create a sub-transaction for each tenant
         for (const tenantId in itemsByTenant) {
             const tenantItems = itemsByTenant[tenantId];
-            const tenantData = tenantDataMap.get(tenantId);
-            if (!tenantData) {
-                logger.warn(`Tenant data for ID ${tenantId} not found, skipping distribution for these items.`);
-                continue;
-            }
-
-            const tenantCounter = tenantData.transactionCounter || 0;
-            const newTenantReceiptNumber = tenantCounter + 1;
             const tenantSubtotal = tenantItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
             const tenantTransactionData = {
-                receiptNumber: newTenantReceiptNumber,
+                receiptNumber: transactionData.receiptNumber, // Use the SAME receipt number
                 storeId: tenantId,
                 customerId: transactionData.customerId,
                 customerName: transactionData.customerName,
@@ -152,26 +139,28 @@ export const onPujaseraTransactionCreate = onDocumentCreated("stores/{pujaseraId
                 createdAt: transactionData.createdAt,
                 items: tenantItems,
                 subtotal: tenantSubtotal,
-                taxAmount: 0,
-                serviceFeeAmount: 0,
-                discountAmount: 0,
-                totalAmount: tenantSubtotal,
+                taxAmount: 0, // Tax is handled at the central level
+                serviceFeeAmount: 0, // Service fee is handled at the central level
+                discountAmount: 0, // Discount is handled at the central level
+                totalAmount: tenantSubtotal, // Total for this tenant's items only
                 paymentMethod: 'Lunas (Pusat)',
                 status: 'Diproses', // This will appear in the tenant's kitchen view
-                pointsEarned: 0,
-                pointsRedeemed: 0,
+                pointsEarned: 0, // Points are handled at the central level
+                pointsRedeemed: 0, // Points are handled at the central level
                 notes: `Bagian dari pesanan pujasera #${String(transactionData.receiptNumber).padStart(6, '0')}`
             };
 
             const newTenantTransactionRef = db.collection('stores').doc(tenantId).collection('transactions').doc();
             batch.set(newTenantTransactionRef, tenantTransactionData);
-            batch.update(db.doc(`stores/${tenantId}`), { transactionCounter: FieldValue.increment(1) });
+            
+            // NOTE: We no longer increment the tenant's personal transaction counter
+            // as the receipt number is now centralized.
         }
         
         // Update customer points if applicable
         if (transactionData.customerId !== 'N/A' && (transactionData.pointsEarned > 0 || transactionData.pointsRedeemed > 0)) {
             const customerRef = db.collection('stores').doc(pujaseraId).collection('customers').doc(transactionData.customerId);
-            const pointsChange = transactionData.pointsEarned - transactionData.pointsRedeemed;
+            const pointsChange = (transactionData.pointsEarned || 0) - (transactionData.pointsRedeemed || 0);
             batch.update(customerRef, { loyaltyPoints: FieldValue.increment(pointsChange) });
         }
         
@@ -193,14 +182,14 @@ export const onPujaseraTransactionCreate = onDocumentCreated("stores/{pujaseraId
             pradanaTokenBalance: FieldValue.increment(-transactionFee)
         });
 
-        // Finally, clear the virtual table
+        // Finally, clear the virtual table if it was a catalog order
         if (transactionData.tableId) {
             const tableRef = db.doc(`stores/${pujaseraId}/tables/${transactionData.tableId}`);
             const tableDoc = await tableRef.get();
             if (tableDoc.exists && tableDoc.data()?.isVirtual) {
                 batch.delete(tableRef);
             } else if (tableDoc.exists) {
-                batch.update(tableRef, { status: 'Menunggu Dibersihkan', currentOrder: null });
+                // For physical tables, don't clear it yet, wait for 'Selesaikan'
             }
         }
 
@@ -326,6 +315,7 @@ export const onTopUpRequestUpdate = onDocumentUpdated("topUpRequests/{requestId}
           await whatsappQueueRef.add({
               to: formattedPhone,
               message: customerMessage,
+              isGroup: false,
               createdAt: FieldValue.serverTimestamp(),
           });
           logger.info(`Queued '${status}' notification for customer ${customerName} of store ${storeId}`);
@@ -425,4 +415,3 @@ export const sendDailySalesSummary = onSchedule({
         logger.error("Error dalam fungsi terjadwal sendDailySalesSummary:", error);
     }
 });
-
