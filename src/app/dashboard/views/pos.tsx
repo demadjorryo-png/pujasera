@@ -276,7 +276,8 @@ export default function POS({ onPrintRequest }: POSProps) {
           quantity: 1,
           price: product.price,
           notes: '',
-          storeId: product.storeId, // Important for pujasera context
+          storeId: product.storeId,
+          storeName: product.storeName,
         },
       ];
     });
