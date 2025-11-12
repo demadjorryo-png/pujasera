@@ -57,6 +57,7 @@ export type Store = {
   theme?: any;
   socialLinks?: any;
   logoUrl?: string;
+  qrisImageUrl?: string;
   description?: string;
   pujaseraName?: string;
   pujaseraLocation?: string;
@@ -123,7 +124,7 @@ export type Transaction = {
   taxAmount: number;
   serviceFeeAmount: number;
   totalAmount: number; // subtotal - discountAmount
-  paymentMethod: 'Cash' | 'Card' | 'QRIS' | 'Belum Dibayar';
+  paymentMethod: 'Cash' | 'Card' | 'QRIS' | 'Belum Dibayar' | 'Lunas (Pusat)';
   pointsEarned: number;
   pointsRedeemed: number;
   items: TransactionItem[];

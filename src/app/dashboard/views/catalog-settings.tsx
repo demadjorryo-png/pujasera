@@ -1,22 +1,23 @@
-
 'use client';
 
 import * as React from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/contexts/auth-context';
-import { CheckCircle, ExternalLink, QrCode as QrCodeIcon, Star, Calendar, AlertCircle, Sparkles as SparklesIcon } from 'lucide-react';
+import { CheckCircle, ExternalLink, QrCode as QrCodeIcon, Star, Calendar, AlertCircle, Sparkles as SparklesIcon, Upload, Loader2, Image as ImageIcon } from 'lucide-react';
 import { useDashboard } from '@/contexts/dashboard-context';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AIConfirmationDialog } from '@/components/dashboard/ai-confirmation-dialog';
 import { useToast } from '@/hooks/use-toast';
-import { auth, db } from '@/lib/firebase';
+import { auth, db, storage } from '@/lib/firebase';
 import { doc, updateDoc, setDoc } from 'firebase/firestore';
 import { format } from 'date-fns';
 import { id as idLocale } from 'date-fns/locale';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { QrCodeDialog } from '@/components/dashboard/QrCodeDialog';
-import html2canvas from 'html2canvas';
+import { Input } from '@/components/ui/input';
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import Image from 'next/image';
 
 const features = [
   "Tampilan menu modern & profesional untuk semua tenant di pujasera Anda.",
@@ -31,14 +32,52 @@ export default function CatalogSettings() {
   const { dashboardData, isLoading } = useDashboard();
   const { feeSettings } = dashboardData;
   const { toast } = useToast();
+  
+  const [qrisImageFile, setQrisImageFile] = React.useState<File | null>(null);
+  const [qrisImagePreview, setQrisImagePreview] = React.useState<string | null>(activeStore?.qrisImageUrl || null);
+  const [isUploading, setIsUploading] = React.useState(false);
+  const qrisFileInputRef = React.useRef<HTMLInputElement>(null);
 
   const handleOpenCatalog = () => {
     if (activeStore?.pujaseraGroupSlug) {
       window.open(`/katalog/${activeStore.pujaseraGroupSlug}`, '_blank');
     }
   };
+  
+  const handleQrisFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      setQrisImageFile(file);
+      setQrisImagePreview(URL.createObjectURL(file));
+    }
+  };
 
-  const handleSubscription = async (planId: number) => {
+  const handleSaveQris = async () => {
+    if (!qrisImageFile || !activeStore) {
+      toast({ variant: 'destructive', title: 'Tidak ada gambar dipilih' });
+      return;
+    }
+    setIsUploading(true);
+    try {
+      const storageRef = ref(storage, `stores/${activeStore.id}/qris/${qrisImageFile.name}`);
+      const uploadResult = await uploadBytes(storageRef, qrisImageFile);
+      const downloadUrl = await getDownloadURL(uploadResult.ref);
+
+      await updateDoc(doc(db, 'stores', activeStore.id), {
+        qrisImageUrl: downloadUrl,
+      });
+
+      updateActiveStore({ qrisImageUrl: downloadUrl });
+      toast({ title: 'Gambar QRIS berhasil disimpan!' });
+    } catch (error) {
+      console.error("Error saving QRIS:", error);
+      toast({ variant: 'destructive', title: 'Gagal menyimpan QRIS' });
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleSubscription = async (planId: number | 'trial') => {
     try {
         const idToken = await auth.currentUser?.getIdToken(true);
         if (!idToken || !activeStore) {
@@ -68,9 +107,9 @@ export default function CatalogSettings() {
 
         if (result.newExpiryDate) {
             updateActiveStore({ 
-                ...activeStore, 
                 catalogSubscriptionExpiry: result.newExpiryDate,
                 pradanaTokenBalance: result.newBalance,
+                hasUsedCatalogTrial: planId === 'trial' ? true : activeStore.hasUsedCatalogTrial,
             });
         } else {
             refreshActiveStore(); 
@@ -164,6 +203,49 @@ export default function CatalogSettings() {
                 </div>
             </CardContent>
         </Card>
+        
+        <Card>
+            <CardHeader>
+                <CardTitle className="font-headline tracking-wider">Pengaturan Pembayaran Katalog</CardTitle>
+                <CardDescription>
+                    Unggah gambar QRIS Anda agar pelanggan dapat membayar langsung melalui katalog.
+                </CardDescription>
+            </CardHeader>
+            <CardContent className="grid md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                    <div 
+                        className="flex justify-center items-center w-full h-48 rounded-md border-2 border-dashed border-input cursor-pointer bg-secondary/50 hover:bg-secondary/70"
+                        onClick={() => qrisFileInputRef.current?.click()}
+                    >
+                        {qrisImagePreview ? (
+                            <Image src={qrisImagePreview} alt="Pratinjau QRIS" width={192} height={192} className="h-full w-full object-contain rounded-md" unoptimized/>
+                        ) : (
+                            <div className="text-center text-muted-foreground">
+                                <ImageIcon className="mx-auto h-10 w-10" />
+                                <p>Klik untuk memilih gambar QRIS</p>
+                            </div>
+                        )}
+                    </div>
+                    <Input 
+                        ref={qrisFileInputRef}
+                        type="file" 
+                        className="hidden" 
+                        onChange={handleQrisFileChange}
+                        accept="image/png, image/jpeg, image/webp"
+                    />
+                </div>
+                 <div className="space-y-4 flex flex-col justify-center">
+                    <p className="text-sm text-muted-foreground">
+                        Pilih gambar kode QRIS (misalnya dari GoPay, OVO, DANA, dll.). Gambar ini akan ditampilkan kepada pelanggan saat mereka memilih opsi pembayaran dengan QRIS di katalog.
+                    </p>
+                    <Button onClick={handleSaveQris} disabled={isUploading || !qrisImageFile}>
+                        {isUploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Upload className="mr-2 h-4 w-4" />}
+                        Simpan Gambar QRIS
+                    </Button>
+                </div>
+            </CardContent>
+        </Card>
+
 
         <Card>
              <CardHeader className="text-center">
@@ -172,7 +254,31 @@ export default function CatalogSettings() {
                     Pilih paket yang paling sesuai dengan kebutuhan bisnis Anda untuk mengaktifkan fitur ini.
                 </CardDescription>
             </CardHeader>
-            <CardContent className="flex flex-col items-stretch gap-6 md:px-20 lg:px-40">
+            <CardContent className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                {!activeStore.hasUsedCatalogTrial && (
+                     <Card className='flex-1 border-destructive shadow-lg'>
+                        <CardHeader className="text-center">
+                            <CardTitle className="text-xl">Percobaan</CardTitle>
+                            <CardDescription>Hanya sekali klaim!</CardDescription>
+                        </CardHeader>
+                        <CardContent className="text-center">
+                            <p className="text-4xl font-bold">{feeSettings.catalogTrialFee} <span className="text-base font-normal text-muted-foreground">Token/{feeSettings.catalogTrialDurationMonths} bln</span></p>
+                        </CardContent>
+                        <CardFooter>
+                            <AIConfirmationDialog
+                              featureName="Klaim Katalog Percobaan"
+                              featureDescription={`Anda akan mengaktifkan langganan Katalog Digital Premium selama ${feeSettings.catalogTrialDurationMonths} bulan.`}
+                              feeSettings={feeSettings}
+                              feeToDeduct={feeSettings.catalogTrialFee}
+                              onConfirm={() => handleSubscription('trial')}
+                              skipFeeDeduction={false}
+                            >
+                                <Button className="w-full" variant="destructive">Klaim Penawaran</Button>
+                            </AIConfirmationDialog>
+                        </CardFooter>
+                    </Card>
+                )}
+                
                 <Card className='flex-1'>
                     <CardHeader className="text-center">
                         <CardTitle className="text-xl">Bulanan</CardTitle>

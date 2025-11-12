@@ -1,14 +1,13 @@
-
 'use client';
 
 import * as React from 'react';
-import type { Store, Product, ProductCategory, RedemptionOption, Customer, OrderPayload, CartItem, TableOrder, ProductInfo } from '@/lib/types';
+import type { Store, Product, RedemptionOption, Customer, OrderPayload, CartItem, TableOrder, ProductInfo } from '@/lib/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import Image from 'next/image';
-import { ChefHat, PackageX, Sparkles, Send, Loader, Gift, ShoppingCart, PlusCircle, MinusCircle, LogIn, UserCircle, LogOut, Crown, Coins, Receipt, Percent, HandCoins, MessageSquare } from 'lucide-react';
+import { ChefHat, PackageX, Sparkles, Send, Loader, Gift, ShoppingCart, PlusCircle, MinusCircle, LogIn, UserCircle, LogOut, Crown, Coins, Receipt, Percent, HandCoins, MessageSquare, QrCode } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter, SheetTrigger } from '@/components/ui/sheet';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -31,6 +30,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Label } from '@/components/ui/label';
 
 // --- Pujasera Specific Types ---
 type TenantWithProducts = {
@@ -304,6 +305,8 @@ export default function CatalogPage() {
     const [isAuthDialogOpen, setIsAuthDialogOpen] = React.useState(false);
     const [loggedInCustomer, setLoggedInCustomer] = React.useState<Customer | null>(null);
     const [activeOrder, setActiveOrder] = React.useState<TableOrder | null>(null);
+    const [paymentMethod, setPaymentMethod] = React.useState<'kasir' | 'qris'>('kasir');
+    const [isQrisDialogOpen, setIsQrisDialogOpen] = React.useState(false);
 
     const sessionKey = `chika-customer-session-${slug}`;
     const activeOrderKey = `chika-active-order-${slug}`;
@@ -405,8 +408,25 @@ export default function CatalogPage() {
         setIsChatOpen(true);
     };
 
+    const handleConfirmOrder = () => {
+        if(paymentMethod === 'qris') {
+            if (pujasera?.qrisImageUrl) {
+                setIsQrisDialogOpen(true);
+            } else {
+                toast({
+                    variant: 'destructive',
+                    title: 'Pembayaran QRIS Tidak Tersedia',
+                    description: 'Pujasera ini belum mengunggah kode QRIS.'
+                });
+            }
+        } else {
+            handleCreateOrder();
+        }
+    };
+
     const handleCreateOrder = async () => {
         if (!loggedInCustomer || !pujasera || cart.length === 0) return;
+        setIsQrisDialogOpen(false); // Close QRIS dialog if open
         setIsSubmittingOrder(true);
         try {
             const payload: OrderPayload = {
@@ -433,7 +453,7 @@ export default function CatalogPage() {
                 localStorage.setItem(activeOrderKey, JSON.stringify(newOrder));
             }
             
-            toast({ title: 'Pesanan Berhasil Dibuat!', description: 'Pesanan Anda sedang diproses. Mohon tunggu notifikasi selanjutnya.' });
+            toast({ title: 'Pesanan Berhasil Dibuat!', description: 'Pesanan Anda sedang diproses. Silakan lanjutkan pembayaran.' });
             setCart([]);
         } catch (error) {
             toast({ variant: 'destructive', title: 'Gagal Membuat Pesanan', description: (error as Error).message });
@@ -615,17 +635,37 @@ export default function CatalogPage() {
                         )}
                     </div>
                     <Separator />
-
                     <div className="flex justify-between font-bold text-lg"><span>Total</span><span>Rp {totalAmount.toLocaleString('id-ID')}</span></div>
+                    
                     {loggedInCustomer ? (
-                         <Button className="w-full" onClick={handleCreateOrder} disabled={isSubmittingOrder}>
-                           {isSubmittingOrder ? <Loader className="animate-spin" /> : <Receipt className="mr-2 h-4 w-4"/>} Konfirmasi & Buat Pesanan
-                         </Button>
+                        <div className="space-y-4">
+                            <RadioGroup value={paymentMethod} onValueChange={(value: 'kasir' | 'qris') => setPaymentMethod(value)} className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <RadioGroupItem value="kasir" id="pay-kasir" className="peer sr-only" />
+                                    <Label htmlFor="pay-kasir" className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary">
+                                        <Receipt className="mb-3 h-6 w-6"/> Bayar di Kasir
+                                    </Label>
+                                </div>
+                                <div>
+                                    <RadioGroupItem value="qris" id="pay-qris" className="peer sr-only" disabled={!pujasera.qrisImageUrl} />
+                                    <Label htmlFor="pay-qris" className={`flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary ${!pujasera.qrisImageUrl ? 'cursor-not-allowed opacity-50' : ''}`}>
+                                        <QrCode className="mb-3 h-6 w-6"/> Bayar dengan QRIS
+                                    </Label>
+                                </div>
+                            </RadioGroup>
+                             <Button className="w-full" onClick={handleConfirmOrder} disabled={isSubmittingOrder}>
+                                {isSubmittingOrder ? <Loader className="animate-spin" /> : <Receipt className="mr-2 h-4 w-4"/>}
+                                Lanjutkan Pesanan
+                             </Button>
+                        </div>
                     ) : (
                          <Alert>
                             <ChefHat className="h-4 w-4" /><AlertTitle>Langkah Berikutnya</AlertTitle>
                             <AlertDescription>
-                                Tunjukkan pesanan ini di kasir, atau <Button variant="link" className="p-0 h-auto" onClick={() => setIsAuthDialogOpen(true)}>masuk/daftar</Button> untuk memesan langsung.
+                                <Button variant="link" className="p-0 h-auto" onClick={() => {
+                                    document.querySelector('[data-radix-collection-item] > button[aria-label="Close"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                                    setIsAuthDialogOpen(true)
+                                }}>Masuk atau daftar</Button> untuk melanjutkan pesanan.
                             </AlertDescription>
                         </Alert>
                     )}
@@ -648,8 +688,29 @@ export default function CatalogPage() {
         {noteProduct && (
             <NoteDialog open={!!noteProduct} onOpenChange={() => setNoteProduct(null)} note={noteProduct.notes || ''} onSave={(newNote) => handleNoteSave(noteProduct.productId, newNote)} />
         )}
+
+        {pujasera?.qrisImageUrl && (
+            <Dialog open={isQrisDialogOpen} onOpenChange={setIsQrisDialogOpen}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Pembayaran dengan QRIS</DialogTitle>
+                        <DialogDescription>
+                            Silakan scan QR code di bawah ini untuk membayar sebesar <span className="font-bold">Rp {totalAmount.toLocaleString('id-ID')}</span>. Setelah pembayaran berhasil, klik tombol konfirmasi.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="flex justify-center p-4">
+                        <Image src={pujasera.qrisImageUrl} alt="QRIS Code" width={256} height={256} className="rounded-lg"/>
+                    </div>
+                    <DialogFooter>
+                         <Button variant="outline" onClick={() => setIsQrisDialogOpen(false)}>Batal</Button>
+                         <Button onClick={handleCreateOrder} disabled={isSubmittingOrder}>
+                            {isSubmittingOrder ? <Loader className="animate-spin" /> : <Receipt className="mr-2 h-4 w-4"/>}
+                           Saya Sudah Bayar, Konfirmasi Pesanan
+                         </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+        )}
         </>
     );
 }
-
-    

@@ -77,6 +77,7 @@ export async function GET(req: NextRequest) {
         name: pujaseraData?.name,
         description: pujaseraData?.description,
         logoUrl: pujaseraData?.logoUrl,
+        qrisImageUrl: pujaseraData?.qrisImageUrl,
         theme: pujaseraData?.theme,
         socialLinks: pujaseraData?.socialLinks,
         location: pujaseraData?.location,
