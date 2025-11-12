@@ -1,3 +1,4 @@
+
 'use client';
 
 import * as React from 'react';
@@ -121,7 +122,7 @@ function TenantDetailDialog({ tenant, open, onOpenChange, onStatusToggle, isProc
                         <Badge variant="outline">Terpusat</Badge>
                     </div>
                      <div className="flex items-center justify-between rounded-lg border p-3">
-                        <span className="text-sm text-muted-foreground flex items-center gap-2">Status POS</span>
+                        <span className="text-sm text-muted-foreground flex items-center gap-2">Status Tenant</span>
                         <div className="flex items-center gap-2">
                             <Badge variant={isPosCurrentlyEnabled ? "default" : "destructive"} className={cn(isPosCurrentlyEnabled && 'bg-green-600')}>{isPosCurrentlyEnabled ? "Aktif" : "Non-Aktif"}</Badge>
                             <Button 
@@ -169,7 +170,7 @@ export default function TenantsManagement() {
       await updateDoc(tenantRef, { isPosEnabled: newStatus });
       toast({
         title: 'Status Tenant Diperbarui',
-        description: `POS untuk ${tenant.name} telah ${newStatus ? 'diaktifkan' : 'dinonaktifkan'}.`,
+        description: `Tenant ${tenant.name} telah ${newStatus ? 'diaktifkan' : 'dinonaktifkan'}.`,
       });
       refreshData();
       setIsDetailDialogOpen(false); // Close dialog on success
@@ -231,7 +232,7 @@ export default function TenantsManagement() {
                 <TableHeader>
                     <TableRow>
                         <TableHead>Nama Tenant</TableHead>
-                        <TableHead className="text-center">Status POS</TableHead>
+                        <TableHead className="text-center">Status Tenant</TableHead>
                     </TableRow>
                 </TableHeader>
                 <TableBody>
