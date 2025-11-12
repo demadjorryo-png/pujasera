@@ -62,6 +62,7 @@ export type Store = {
   pujaseraLocation?: string;
   pujaseraGroupSlug?: string;
   posMode?: PosMode;
+  isPosEnabled?: boolean;
 };
 
 export type UserRole = 'admin' | 'cashier' | 'superadmin' | 'kitchen' | 'pujasera_admin' | 'pujasera_cashier';
@@ -232,6 +233,7 @@ export type TransactionFeeSettings = {
   maxFeeRp: number;
   aiUsageFee: number;
   newStoreBonusTokens: number;
+  newTenantBonusTokens: number;
   aiBusinessPlanFee: number;
   aiSessionFee: number;
   aiSessionDurationMinutes: number;

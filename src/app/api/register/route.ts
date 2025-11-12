@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const feeSettings = await getTransactionFeeSettings();
-    const bonusTokens = feeSettings.newStoreBonusTokens || 0;
+    const bonusTokens = feeSettings.newStoreBonusTokens || 0; // Use newStoreBonusTokens
 
     const userRecord = await auth.createUser({ email, password, displayName: adminName });
     newUser = userRecord;

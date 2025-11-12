@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
     const pujaseraData = pujaseraSnapshot.docs[0].data();
     
     const feeSettings = await getTransactionFeeSettings();
-    const bonusTokens = feeSettings.newStoreBonusTokens || 0;
+    const bonusTokens = feeSettings.newTenantBonusTokens || 0; // Use newTenantBonusTokens
 
     const userRecord = await auth.createUser({ email, password, displayName: adminName });
     newUser = userRecord;
