@@ -8,13 +8,14 @@ import { useToast } from '@/hooks/use-toast';
 import { formatDistanceToNow } from 'date-fns';
 import { id as idLocale } from 'date-fns/locale';
 import { Button } from '@/components/ui/button';
-import { CheckCircle, ChefHat, Loader, MessageSquare, Printer, Send } from 'lucide-react';
-import { doc, writeBatch, getDoc, updateDoc } from 'firebase/firestore';
+import { CheckCircle, ChefHat, Loader, MessageSquare, Printer, Send, Store } from 'lucide-react';
+import { doc, writeBatch, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/contexts/auth-context';
 import { Badge } from '@/components/ui/badge';
-import type { Transaction, TransactionStatus } from '@/lib/types';
+import type { Transaction, TransactionStatus, CartItem } from '@/lib/types';
 import { cn } from '@/lib/utils';
+import { Separator } from '@/components/ui/separator';
 
 type KitchenProps = {
     onFollowUpRequest: (transaction: Transaction) => void;
@@ -29,8 +30,6 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
     const [processingId, setProcessingId] = React.useState<string | null>(null);
 
     const activeOrders = React.useMemo(() => {
-        // For pujasera users, they see all 'Diproses' transactions in their group.
-        // For tenant users, they only see their own 'Diproses' transactions.
         const relevantTransactions = currentUser?.role === 'pujasera_admin' || currentUser?.role === 'pujasera_cashier'
             ? transactions
             : transactions.filter(t => t.storeId === activeStore?.id);
@@ -46,8 +45,6 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
         
         const isPujaseraAction = currentUser?.role === 'pujasera_admin' || currentUser?.role === 'pujasera_cashier';
         
-        // Determine the correct storeId for the transaction document.
-        // For pujasera, it's the pujasera's storeId. For tenants, it's their own storeId.
         const txStoreId = isPujaseraAction && transaction.pujaseraGroupSlug ? activeStore.id : transaction.storeId;
         
         try {
@@ -73,8 +70,10 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                     }
                 }
             } else if (action === 'ready') {
-                batch.update(transactionRef, { status: 'Siap Diambil' });
-                successMessage = `Pesanan tenant ${activeStore.name} siap diambil.`;
+                // When a tenant marks their part as ready, they are updating their own sub-transaction
+                const tenantTransactionRef = doc(db, 'stores', activeStore.id, 'transactions', transaction.id);
+                batch.update(tenantTransactionRef, { status: 'Siap Diambil' });
+                successMessage = `Pesanan Anda untuk nota #${String(transaction.receiptNumber).padStart(6, '0')} telah ditandai siap.`;
             }
 
             await batch.commit();
@@ -109,12 +108,25 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
         }
     }
 
+    const groupItemsByStore = (items: CartItem[]) => {
+        return items.reduce((acc, item) => {
+            const storeName = item.storeName || 'Toko Tidak Dikenal';
+            if (!acc[storeName]) {
+                acc[storeName] = [];
+            }
+            acc[storeName].push(item);
+            return acc;
+        }, {} as Record<string, CartItem[]>);
+    };
+
     return (
         <div className="h-[calc(100vh-8rem)] flex flex-col">
             <ScrollArea className="flex-grow">
                 <div className="space-y-4 p-1">
                     {activeOrders.length > 0 ? (
-                        activeOrders.map(order => (
+                        activeOrders.map(order => {
+                            const itemsByStore = isPujaseraUser ? groupItemsByStore(order.items) : null;
+                            return (
                             <Card key={order.id} className="flex flex-col">
                                 <CardHeader>
                                     <div className='flex justify-between items-start'>
@@ -127,17 +139,36 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                                         {getStatusBadge(order.status)}
                                     </div>
                                 </CardHeader>
-                                <CardContent className="flex-grow space-y-2">
-                                    {order.items.map((item, index) => (
-                                        <div key={index} className="flex justify-between items-start">
-                                            <div className="flex-1">
-                                                <span className="font-semibold">{item.quantity}x</span> {item.productName}
-                                                {item.notes && (
-                                                    <p className="text-xs text-muted-foreground italic pl-4">&quot;{item.notes}&quot;</p>
-                                                )}
+                                <CardContent className="flex-grow space-y-4">
+                                     {itemsByStore ? (
+                                        Object.entries(itemsByStore).map(([storeName, items]) => (
+                                            <div key={storeName} className="space-y-2 rounded-md border p-3">
+                                                <p className="font-semibold text-sm flex items-center gap-2"><Store className="h-4 w-4 text-muted-foreground"/> {storeName}</p>
+                                                <Separator />
+                                                {items.map((item, index) => (
+                                                    <div key={index} className="flex justify-between items-start text-sm ml-2">
+                                                        <div>
+                                                            <span className="font-semibold">{item.quantity}x</span> {item.productName}
+                                                            {item.notes && (
+                                                                <p className="text-xs text-muted-foreground italic pl-4">&quot;{item.notes}&quot;</p>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                ))}
                                             </div>
-                                        </div>
-                                    ))}
+                                        ))
+                                     ) : (
+                                        order.items.map((item, index) => (
+                                            <div key={index} className="flex justify-between items-start">
+                                                <div className="flex-1">
+                                                    <span className="font-semibold">{item.quantity}x</span> {item.productName}
+                                                    {item.notes && (
+                                                        <p className="text-xs text-muted-foreground italic pl-4">&quot;{item.notes}&quot;</p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ))
+                                     )}
                                 </CardContent>
                                 <CardFooter className="flex gap-2">
                                      <Button 
@@ -179,7 +210,7 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                                     )}
                                 </CardFooter>
                             </Card>
-                        ))
+                        )})
                     ) : (
                         <div className="col-span-full flex flex-col items-center justify-center text-center text-muted-foreground h-96">
                             <ChefHat className="w-16 h-16 mb-4" />
