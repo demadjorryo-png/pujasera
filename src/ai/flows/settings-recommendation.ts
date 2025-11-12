@@ -33,7 +33,7 @@ export const settingsRecommendationFlow = ai.defineFlow(
   },
   async (input) => {
     const { output } = await ai.generate({
-      model: 'openai/gpt-4o', // Corrected from gemini-pro to an OpenAI model
+      model: 'openai/gpt-4o',
       prompt: PROMPT_TEMPLATE,
       input: input,
       output: {
