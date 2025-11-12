@@ -1,6 +1,7 @@
+'use client';
 import { NextRequest, NextResponse } from 'next/server';
 import { getFirebaseAdmin } from '@/lib/server/firebase-admin';
-import type { OrderPayload, Table, TableOrder } from '@/lib/types';
+import type { OrderPayload, Table, TableOrder, Transaction } from '@/lib/types';
 import { FieldValue } from 'firebase-admin/firestore';
 
 export async function POST(req: NextRequest) {
@@ -15,52 +16,56 @@ export async function POST(req: NextRequest) {
 
         const pujaseraStoreRef = db.collection('stores').doc(pujaseraId);
         
-        const newVirtualTableRef = db.collection('stores').doc(pujaseraId).collection('tables').doc();
+        // --- START: New Logic to Create Transaction Directly ---
+        const result = await db.runTransaction(async (transaction) => {
+            const pujaseraStoreDoc = await transaction.get(pujaseraStoreRef);
+            if (!pujaseraStoreDoc.exists) {
+                throw new Error("Pujasera tidak ditemukan.");
+            }
+            
+            const pujaseraCounter = pujaseraStoreDoc.data()?.transactionCounter || 0;
+            const newReceiptNumber = pujaseraCounter + 1;
+            
+            const newTransactionData: Omit<Transaction, 'id'> = {
+                receiptNumber: newReceiptNumber,
+                storeId: pujaseraId,
+                customerId: customer.id,
+                customerName: customer.name,
+                staffId: 'catalog-system', // Indicate it's from the catalog
+                createdAt: new Date().toISOString(),
+                items: cart.map(item => ({...item, storeId: item.storeId || ''})),
+                subtotal, taxAmount, serviceFeeAmount, discountAmount: 0,
+                totalAmount,
+                paymentMethod: paymentMethod === 'qris' ? 'QRIS' : 'Belum Dibayar', // If QRIS, assume paid. Otherwise, pay at cashier.
+                status: 'Diproses', // Directly set to 'Diproses' to trigger kitchen
+                pointsEarned: 0, // Points are calculated by cashier later if needed
+                pointsRedeemed: 0,
+                pujaseraGroupSlug: pujaseraStoreDoc.data()?.pujaseraGroupSlug,
+                notes: 'Pesanan dari Katalog Publik'
+            };
 
-        // The order object to be stored in the virtual table
-        const orderForTable: TableOrder = {
-            items: cart, // The full cart with items from various tenants
-            totalAmount: totalAmount,
-            orderTime: new Date().toISOString(),
-            customer: {
-                id: customer.id,
-                name: customer.name,
-                phone: customer.phone,
-                avatarUrl: customer.avatarUrl
-            },
-            paymentMethod: paymentMethod, // Save the chosen payment method
-        };
-
-        const currentCounter = (await pujaseraStoreRef.get()).data()?.virtualTableCounter || 0;
-        const newCounter = currentCounter + 1;
-        
-        // Data for the new virtual table document
-        const newTableData: Omit<Table, 'id'> = {
-            name: `Virtual #${newCounter}`,
-            capacity: 1, // Virtual tables have a capacity of 1
-            status: 'Terisi', // Immediately set to 'Terisi' as it has an order
-            isVirtual: true,
-            currentOrder: orderForTable,
-        };
-
-        const batch = db.batch();
-        
-        // Set the new table data
-        batch.set(newVirtualTableRef, newTableData);
-        
-        // Increment the counter for the next virtual table
-        batch.update(pujaseraStoreRef, { virtualTableCounter: FieldValue.increment(1) });
-
-        await batch.commit();
+            const newTxRef = db.collection('stores').doc(pujaseraId).collection('transactions').doc();
+            transaction.set(newTxRef, newTransactionData);
+            
+            // Increment the transaction counter
+            transaction.update(pujaseraStoreRef, { transactionCounter: FieldValue.increment(1) });
+            
+            return {
+                success: true,
+                transactionId: newTxRef.id,
+                receiptNumber: newReceiptNumber
+            };
+        });
+        // --- END: New Logic ---
 
         return NextResponse.json({ 
             success: true, 
-            message: `Pesanan berhasil dibuat dan ditempatkan di meja virtual ${newTableData.name}.`,
-            table: { id: newVirtualTableRef.id, ...newTableData }
+            message: `Pesanan #${result.receiptNumber} berhasil dibuat dan sedang diproses oleh dapur.`,
+            transactionId: result.transactionId
         });
 
     } catch (error) {
-        console.error('Error creating virtual table order:', error);
+        console.error('Error creating catalog order transaction:', error);
         return NextResponse.json({ error: (error as Error).message }, { status: 500 });
     }
 }
