@@ -9,7 +9,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { id as idLocale } from 'date-fns/locale';
 import { Button } from '@/components/ui/button';
 import { CheckCircle, ChefHat, Loader, MessageSquare, Printer, Send, Store } from 'lucide-react';
-import { doc, writeBatch, getDoc } from 'firebase/firestore';
+import { doc, writeBatch, getDoc, collection, query, where, getDocs, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/contexts/auth-context';
 import { Badge } from '@/components/ui/badge';
@@ -115,10 +115,13 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                 const subTransactionQuery = await getDocs(query(collection(db, 'stores', slice.tenantStoreId, 'transactions'), where('receiptNumber', '==', slice.parentTransaction.receiptNumber)));
                 
                 if (subTransactionQuery.empty) {
-                    throw new Error(`Sub-transaksi untuk tenant ${slice.tenantStoreName} tidak ditemukan.`);
+                    // Fallback to update the main transaction if sub-transaction is not found (for non-pujasera flow)
+                    const mainTransactionRef = doc(db, 'stores', slice.tenantStoreId, 'transactions', slice.parentTransaction.id);
+                    await updateDoc(mainTransactionRef, { status: 'Siap Diambil' });
+                } else {
+                    const subTransactionRef = subTransactionQuery.docs[0].ref;
+                    await updateDoc(subTransactionRef, { status: 'Siap Diambil' });
                 }
-                const subTransactionRef = subTransactionQuery.docs[0].ref;
-                batch.update(subTransactionRef, { status: 'Siap Diambil' });
 
                 successMessage = `Pesanan dari ${slice.tenantStoreName} (Nota #${String(slice.parentTransaction.receiptNumber).padStart(6, '0')}) telah ditandai siap.`;
             }
