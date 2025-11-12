@@ -8,7 +8,7 @@ import { SpeedInsights } from "@vercel/speed-insights/next"
 import PwaInstaller from '@/components/Pwa-installer';
 
 export const metadata: Metadata = {
-  title: 'Chika POS F&B',
+  title: 'Pujasera Chika AI',
   description: 'Aplikasi Kasir untuk Semua Jenis Usaha F&B',
 };
 

@@ -13,7 +13,7 @@ export function Logo({ storeName }: LogoProps) {
         <ChefHat className="h-6 w-6 text-primary" />
       </div>
       <div className="flex flex-col group-data-[collapsible=icon]:hidden">
-        <span className="font-headline text-xl leading-none tracking-wider text-sidebar-foreground">CHIKA POS F&B</span>
+        <span className="font-headline text-xl leading-none tracking-wider text-sidebar-foreground">PUJASERA Chika AI</span>
         {storeName && (
             <span className="text-xs font-medium text-sidebar-foreground/70">{storeName}</span>
         )}
