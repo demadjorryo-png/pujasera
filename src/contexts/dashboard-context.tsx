@@ -194,51 +194,45 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
     if (storeId) {
         const setupTransactionListener = () => {
-            // Clean up previous listeners
             unsubscribes.forEach(unsub => unsub());
             unsubscribes = [];
             
-            const transactionsMap: { [id: string]: Transaction } = {};
             let isInitialLoad = true;
-
-            const targetStoreIds = isPujaseraUser
-                ? pujaseraTenants.map(t => t.id)
-                : [storeId];
             
-            targetStoreIds.forEach(sId => {
-                const transactionsQuery = query(collection(db, 'stores', sId, 'transactions'));
-                const unsubscribe = onSnapshot(transactionsQuery, (snapshot) => {
-                    snapshot.docChanges().forEach((change) => {
-                        const docData = { id: change.doc.id, ...change.doc.data() } as Transaction;
-                        if (change.type === 'removed') {
-                            delete transactionsMap[change.doc.id];
-                        } else {
-                            transactionsMap[change.doc.id] = docData;
-                        }
+            const targetStoreId = isPujaseraUser ? storeId : storeId;
 
-                        // Only notify for new additions after the initial load
-                        if (!isInitialLoad && change.type === "added" && docData.status === 'Diproses' && !notifiedTransactionsRef.current.has(change.doc.id)) {
-                             setTimeout(() => {
-                                toast({
-                                    title: `🔔 Pesanan Baru (Nota #${String(docData.receiptNumber).padStart(6, '0')})`,
-                                    description: `Ada pesanan baru untuk pelanggan ${docData.customerName}.`,
-                                });
-                                playNotificationSound();
-                            }, 100);
-                            notifiedTransactionsRef.current.add(change.doc.id);
+            const transactionsQuery = query(collection(db, 'stores', targetStoreId, 'transactions'), orderBy('createdAt', 'desc'));
+            const unsubscribe = onSnapshot(transactionsQuery, (snapshot) => {
+                const newTransactions = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
+                setTransactions(newTransactions);
+
+                if (!isInitialLoad) {
+                    snapshot.docChanges().forEach((change) => {
+                        if (change.type === "added") {
+                            const docData = change.doc.data() as Transaction;
+                            if (docData.status === 'Diproses' && !notifiedTransactionsRef.current.has(change.doc.id)) {
+                                setTimeout(() => {
+                                    toast({
+                                        title: `🔔 Pesanan Baru (Nota #${String(docData.receiptNumber).padStart(6, '0')})`,
+                                        description: `Ada pesanan baru untuk pelanggan ${docData.customerName}.`,
+                                    });
+                                    playNotificationSound();
+                                }, 500); // Delay to avoid react state update errors
+                                notifiedTransactionsRef.current.add(change.doc.id);
+                            }
                         }
                     });
-                    
-                    setTransactions(Object.values(transactionsMap).sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
-                    
-                    if (isInitialLoad) {
-                      isInitialLoad = false;
-                    }
-
-                }, (error) => console.error(`Error listening to transactions for store ${sId}:`, error));
-
-                unsubscribes.push(unsubscribe);
+                }
+                isInitialLoad = false;
+            }, (error) => {
+                console.error(`Error listening to transactions for store ${targetStoreId}:`, error);
+                toast({
+                    variant: 'destructive',
+                    title: 'Gagal Memuat Transaksi',
+                    description: 'Tidak dapat memuat pembaruan transaksi secara real-time.'
+                });
             });
+            unsubscribes.push(unsubscribe);
         };
 
         setupTransactionListener();

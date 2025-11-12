@@ -144,7 +144,7 @@ export const onPujaseraTransactionCreate = onDocumentCreated("stores/{pujaseraId
                 serviceFeeAmount: 0, // Service fee is handled at the central level
                 discountAmount: 0, // Discount is handled at the central level
                 totalAmount: tenantSubtotal, // Total for this tenant's items only
-                paymentMethod: 'Lunas (Pusat)',
+                paymentMethod: transactionData.paymentMethod, // Inherit payment method from main transaction
                 status: 'Diproses', // This will appear in the tenant's kitchen view
                 pointsEarned: 0, // Points are handled at the central level
                 pointsRedeemed: 0, // Points are handled at the central level
