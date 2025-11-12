@@ -190,44 +190,41 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
     const isPujaseraUser = currentUser.role === 'pujasera_admin' || currentUser.role === 'pujasera_cashier';
     const storeId = activeStore?.id;
-    const groupSlug = activeStore?.pujaseraGroupSlug;
 
     if (storeId) {
-        if (isPujaseraUser && groupSlug) {
-            // For pujasera users, listen to the transactions collection group for all tenants
-            // AND the pujasera's own transactions collection.
-            const tenantTxQuery = query(
-                collectionGroup(db, 'transactions'),
-                where('pujaseraGroupSlug', '==', groupSlug)
-            );
-            const pujaseraTxQuery = query(
-                collection(db, 'stores', storeId, 'transactions'),
-                orderBy('createdAt', 'desc')
-            );
-    
-            const unsubTenantTxs = onSnapshot(tenantTxQuery, (snapshot) => {
-                const tenantTxs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
-                setTransactions(currentTxs => {
-                    // Combine with pujasera-level transactions
-                    const pujaseraTxs = currentTxs.filter(t => t.storeId === storeId);
-                    const allTxs = [...tenantTxs, ...pujaseraTxs];
-                    // Deduplicate
-                    return Array.from(new Map(allTxs.map(t => [t.id, t])).values());
-                });
-            }, (error) => console.error("Error listening to tenant transactions:", error));
-    
+        if (isPujaseraUser) {
+            // For pujasera users, listen to transactions from the main pujasera store
+            // AND from all associated tenant stores.
+            const pujaseraTxQuery = query(collection(db, 'stores', storeId, 'transactions'), orderBy('createdAt', 'desc'));
             const unsubPujaseraTxs = onSnapshot(pujaseraTxQuery, (snapshot) => {
                 const pujaseraTxs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
                 setTransactions(currentTxs => {
-                    // Combine with tenant-level transactions
+                    // Combine with tenant-level transactions, filtering out old pujasera ones
                     const tenantTxs = currentTxs.filter(t => t.storeId !== storeId);
-                     const allTxs = [...tenantTxs, ...pujaseraTxs];
-                    // Deduplicate
+                    const allTxs = [...tenantTxs, ...pujaseraTxs];
                     return Array.from(new Map(allTxs.map(t => [t.id, t])).values());
                 });
             }, (error) => console.error("Error listening to pujasera transactions:", error));
+            unsubscribes.push(unsubPujaseraTxs);
 
-            unsubscribes.push(unsubTenantTxs, unsubPujaseraTxs);
+            // Now, listen to each tenant's transactions individually
+            pujaseraTenants.forEach(tenant => {
+                // Don't listen to the pujasera's own transactions again
+                if (tenant.id === storeId) return;
+
+                const tenantTxQuery = query(collection(db, 'stores', tenant.id, 'transactions'), orderBy('createdAt', 'desc'));
+                const unsubTenant = onSnapshot(tenantTxQuery, (snapshot) => {
+                    const tenantTxs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
+                    setTransactions(currentTxs => {
+                         // Combine with all other transactions, replacing this tenant's old data
+                        const otherTxs = currentTxs.filter(t => t.storeId !== tenant.id);
+                        const allTxs = [...otherTxs, ...tenantTxs];
+                        return Array.from(new Map(allTxs.map(t => [t.id, t])).values());
+                    });
+                }, (error) => console.error(`Error listening to transactions for tenant ${tenant.name}:`, error));
+                unsubscribes.push(unsubTenant);
+            });
+
         } else {
             // For regular tenant users, listen only to their own store's transactions
             const transactionsQuery = query(collection(db, 'stores', storeId, 'transactions'), orderBy('createdAt', 'desc'));
@@ -287,7 +284,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     return () => {
         unsubscribes.forEach(unsub => unsub());
     };
-  }, [isAuthLoading, currentUser, activeStore, refreshData, toast, playNotificationSound]);
+  }, [isAuthLoading, currentUser, activeStore, refreshData, toast, playNotificationSound, pujaseraTenants]);
 
   const value = {
     dashboardData: {
