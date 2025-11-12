@@ -105,8 +105,8 @@ export const onPujaseraTransactionCreate = onDocumentCreated("stores/{pujaseraId
     const transactionData = transactionSnapshot.data();
     const pujaseraId = event.params.pujaseraId;
 
-    // Only proceed if this transaction is for a pujasera group and is marked 'Diproses'
-    // This is the main guard to prevent the function from processing sub-transactions.
+    // Only proceed if this transaction is a main pujasera transaction and is marked 'Diproses'
+    // This is the main guard to prevent the function from processing sub-transactions or completed ones.
     if (!transactionData.pujaseraGroupSlug || transactionData.status !== 'Diproses') {
         return;
     }
@@ -126,19 +126,8 @@ export const onPujaseraTransactionCreate = onDocumentCreated("stores/{pujaseraId
             itemsByTenant[item.storeId].push(item);
         }
         
-        // Fetch all tenants' data in parallel to get their current transaction counters
-        const tenantRefs = Object.keys(itemsByTenant).map(tenantId => db.doc(`stores/${tenantId}`));
-        const tenantDocs = await db.getAll(...tenantRefs);
-        const tenantDataMap = new Map(tenantDocs.map(doc => [doc.id, doc.data()]));
-
         // Create a sub-transaction for each tenant
         for (const tenantId in itemsByTenant) {
-            const tenantData = tenantDataMap.get(tenantId);
-            if (!tenantData) {
-                logger.warn(`Tenant data for ID ${tenantId} not found, skipping distribution for these items.`);
-                continue;
-            }
-
             const tenantItems = itemsByTenant[tenantId];
             const tenantSubtotal = tenantItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
@@ -173,7 +162,7 @@ export const onPujaseraTransactionCreate = onDocumentCreated("stores/{pujaseraId
             batch.update(customerRef, { loyaltyPoints: FieldValue.increment(pointsChange) });
         }
         
-        // Update pujasera transaction counter and token balance
+        // Deduct token from pujasera balance. This function no longer handles transaction counter.
         const settingsDoc = await db.doc('appSettings/transactionFees').get();
         const feeSettings = settingsDoc.data() || {};
         const feePercentage = feeSettings.feePercentage ?? 0.005;
@@ -186,8 +175,6 @@ export const onPujaseraTransactionCreate = onDocumentCreated("stores/{pujaseraId
         const feeCappedAtMax = Math.min(feeCappedAtMin, maxFeeRp);
         const transactionFee = feeCappedAtMax / tokenValueRp;
         
-        // The main transaction counter is already incremented when the main transaction is created.
-        // This function should ONLY deduct tokens.
         batch.update(db.doc(`stores/${pujaseraId}`), { 
             pradanaTokenBalance: FieldValue.increment(-transactionFee)
         });
@@ -207,7 +194,6 @@ export const onPujaseraTransactionCreate = onDocumentCreated("stores/{pujaseraId
 
     } catch (error) {
         logger.error(`Error processing pujasera transaction ${transactionSnapshot.id}:`, error);
-        // Optionally, update the transaction status to 'failed_distribution'
     }
 });
 
@@ -424,5 +410,3 @@ export const sendDailySalesSummary = onSchedule({
         logger.error("Error dalam fungsi terjadwal sendDailySalesSummary:", error);
     }
 });
-
-    
