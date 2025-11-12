@@ -26,7 +26,7 @@ type KitchenProps = {
 export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: KitchenProps) {
     const { dashboardData, refreshData } = useDashboard();
     const { activeStore, currentUser } = useAuth();
-    const { transactions } = dashboardData;
+    const { transactions, tables } = dashboardData;
     const { toast } = useToast();
     const [processingId, setProcessingId] = React.useState<string | null>(null);
 
@@ -130,6 +130,7 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                     {activeOrders.length > 0 ? (
                         activeOrders.map(order => {
                             const itemsByStore = isPujaseraUser ? groupItemsByStore(order.items) : null;
+                            const tableName = tables.find(t => t.id === order.tableId)?.name;
                             return (
                             <Card key={order.id} className="flex flex-col">
                                 <CardHeader>
@@ -137,7 +138,10 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                                         <div>
                                             <CardTitle>{order.customerName}</CardTitle>
                                             <CardDescription>
-                                                Nota: {String(order.receiptNumber).padStart(6, '0')} &bull; {formatDistanceToNow(new Date(order.createdAt), { addSuffix: true, locale: idLocale })}
+                                                Nota: {String(order.receiptNumber).padStart(6, '0')} 
+                                                {tableName && ` • Meja: ${tableName}`}
+                                                {' • '}
+                                                {formatDistanceToNow(new Date(order.createdAt), { addSuffix: true, locale: idLocale })}
                                             </CardDescription>
                                         </div>
                                         {getStatusBadge(order.status)}
