@@ -1,5 +1,4 @@
 
-
 import { NextRequest, NextResponse } from 'next/server';
 import { getFirebaseAdmin } from '@/lib/server/firebase-admin';
 
@@ -12,58 +11,79 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const storesRef = db.collection('stores');
-    const querySnapshot = await storesRef.where('catalogSlug', '==', slug).limit(1).get();
+    // 1. Find the main Pujasera document by its unique catalogSlug
+    const pujaseraQuery = db.collection('stores').where('catalogSlug', '==', slug).limit(1);
+    const pujaseraSnapshot = await pujaseraQuery.get();
 
-    if (querySnapshot.empty) {
+    if (pujaseraSnapshot.empty) {
       return NextResponse.json({ error: 'Katalog tidak ditemukan.' }, { status: 404 });
     }
     
-    const storeDocSnapshot = querySnapshot.docs[0];
-    const storeId = storeDocSnapshot.id;
-    const storeData = storeDocSnapshot.data();
+    const pujaseraDoc = pujaseraSnapshot.docs[0];
+    const pujaseraData = pujaseraDoc.data();
 
-    // Re-enable subscription check
+    // 2. Check if the subscription is active
     const now = new Date();
-    const expiryDate = storeData?.catalogSubscriptionExpiry ? new Date(storeData.catalogSubscriptionExpiry) : null;
+    const expiryDate = pujaseraData?.catalogSubscriptionExpiry ? new Date(pujaseraData.catalogSubscriptionExpiry) : null;
     if (!expiryDate || expiryDate < now) {
         return NextResponse.json({ error: 'Katalog saat ini tidak tersedia atau langganan telah berakhir.' }, { status: 403 });
     }
 
-    const productsPromise = db.collection('stores').doc(storeId).collection('products')
-      .orderBy('name')
-      .get();
+    const pujaseraGroupSlug = pujaseraData.pujaseraGroupSlug;
+    if (!pujaseraGroupSlug) {
+      return NextResponse.json({ error: 'Konfigurasi grup pujasera tidak ditemukan.' }, { status: 500 });
+    }
+
+    // 3. Find all active tenants in the pujasera group, excluding the pujasera document itself
+    const tenantsQuery = db.collection('stores')
+      .where('pujaseraGroupSlug', '==', pujaseraGroupSlug)
+      .where('__name__', '!=', pujaseraDoc.id);
       
-    const promotionsPromise = db.collection('stores').doc(storeId).collection('redemptionOptions')
+    const tenantsSnapshot = await tenantsQuery.get();
+
+    // 4. Fetch products for each active tenant
+    const tenantProductPromises = tenantsSnapshot.docs.map(async (tenantDoc) => {
+        const tenantData = tenantDoc.data();
+        // Skip tenants that are explicitly disabled
+        if (tenantData.isPosEnabled === false) {
+            return null;
+        }
+
+        const productsSnapshot = await db.collection('stores').doc(tenantDoc.id).collection('products').orderBy('name').get();
+        const products = productsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+        return {
+            id: tenantDoc.id,
+            name: tenantData.name,
+            products: products,
+        };
+    });
+
+    const tenantsWithProducts = (await Promise.all(tenantProductPromises)).filter(Boolean);
+    
+    // 5. Fetch active promotions for the pujasera
+    const promotionsSnapshot = await db.collection('stores').doc(pujaseraDoc.id).collection('redemptionOptions')
         .where('isActive', '==', true)
         .get();
-
-    const [productsSnapshot, promotionsSnapshot] = await Promise.all([productsPromise, promotionsPromise]);
-      
-    const products = productsSnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-
+        
     const promotions = promotionsSnapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data(),
     }));
 
-
     const catalogData = {
-      store: {
-        id: storeId,
-        name: storeData?.name,
-        description: storeData?.description,
-        logoUrl: storeData?.logoUrl,
-        theme: storeData?.theme,
-        socialLinks: storeData?.socialLinks,
-        location: storeData?.location,
-        financialSettings: storeData?.financialSettings,
+      pujasera: {
+        id: pujaseraDoc.id,
+        name: pujaseraData?.name,
+        description: pujaseraData?.description,
+        logoUrl: pujaseraData?.logoUrl,
+        theme: pujaseraData?.theme,
+        socialLinks: pujaseraData?.socialLinks,
+        location: pujaseraData?.location,
+        financialSettings: pujaseraData?.financialSettings,
       },
-      products,
-      promotions,
+      tenants: tenantsWithProducts,
+      promotions: promotions,
     };
 
     return NextResponse.json(catalogData);
