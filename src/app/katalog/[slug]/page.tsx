@@ -30,6 +30,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 // --- Pujasera Specific Types ---
 type TenantWithProducts = {
@@ -398,6 +399,7 @@ export default function CatalogPage() {
     };
 
     const handleAskAI = (product: Product) => {
+        if (!pujasera) return;
         setCurrentProductContext({ name: product.name, description: product.description, price: product.price });
         setInitialChatQuestion(`Jelaskan tentang ${product.name}`);
         setIsChatOpen(true);
@@ -502,10 +504,14 @@ export default function CatalogPage() {
                  {activeOrder ? <OrderStatusCard order={activeOrder} onComplete={handleCompleteOrder} /> : (promotions && <PromotionSection promotions={promotions} />)}
                  
                  {tenants && tenants.length > 0 ? (
-                    <div className="space-y-12">
+                    <Tabs defaultValue={tenants[0].id} className="w-full">
+                        <TabsList className="grid w-full grid-cols-2 md:grid-cols-4">
+                            {tenants.map(tenant => (
+                                <TabsTrigger key={tenant.id} value={tenant.id}>{tenant.name}</TabsTrigger>
+                            ))}
+                        </TabsList>
                         {tenants.map(tenant => (
-                            <section key={tenant.id} id={`tenant-${tenant.id}`}>
-                                <h2 className="text-2xl font-bold font-headline mb-6 border-b-2 border-primary pb-2">{tenant.name}</h2>
+                            <TabsContent key={tenant.id} value={tenant.id} className="mt-6">
                                 {tenant.products.length > 0 ? (
                                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                                         {tenant.products.map(product => {
@@ -549,11 +555,11 @@ export default function CatalogPage() {
                                         )})}
                                     </div>
                                 ) : (
-                                     <p className="text-center text-muted-foreground py-4">Tenant ini belum memiliki produk.</p>
+                                     <p className="text-center text-muted-foreground py-10">Tenant ini belum memiliki produk.</p>
                                 )}
-                            </section>
+                            </TabsContent>
                         ))}
-                    </div>
+                    </Tabs>
                  ) : (
                     <p className="text-center text-muted-foreground py-10">Belum ada tenant aktif di pujasera ini.</p>
                  )}
@@ -645,3 +651,5 @@ export default function CatalogPage() {
         </>
     );
 }
+
+    
