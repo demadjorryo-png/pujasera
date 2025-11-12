@@ -1,3 +1,4 @@
+
 'use client';
 
 import * as React from 'react';
@@ -43,11 +44,9 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
         if (!activeStore) return;
         setProcessingId(transaction.id);
         
-        const isPujaseraAction = currentUser?.role === 'pujasera_admin' || currentUser?.role === 'pujasera_cashier';
-        
-        // For Pujasera users, the transaction is on the main pujasera store document.
-        // For Tenant users, it's on their own store document.
-        const txStoreId = isPujaseraAction ? activeStore.id : transaction.storeId;
+        // For Pujasera users completing an order, the target is the sub-transaction inside the tenant's store doc.
+        // The `transaction` object in the kitchen view for pujasera users IS the sub-transaction.
+        const txStoreId = transaction.storeId;
         
         try {
             const batch = writeBatch(db);
@@ -61,8 +60,9 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                 batch.update(transactionRef, { status: 'Selesai' });
                 successMessage = `Pesanan untuk ${transaction.customerName} telah ditandai selesai.`;
 
+                // The pujasera is responsible for the table, so we use `activeStore.id` for the tableRef path.
                 if (transaction.tableId) {
-                    const tableRef = doc(db, 'stores', txStoreId, 'tables', transaction.tableId);
+                    const tableRef = doc(db, 'stores', activeStore.id, 'tables', transaction.tableId);
                     const tableDoc = await getDoc(tableRef);
                     if (tableDoc.exists()) {
                         if (tableDoc.data()?.isVirtual) {
@@ -73,7 +73,8 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                     }
                 }
             } else if (action === 'ready') {
-                // When a tenant marks their part as ready, they are updating their own sub-transaction
+                // When a tenant marks their part as ready, they are updating their own sub-transaction.
+                // activeStore.id would be the tenant's own store ID here.
                 const tenantTransactionRef = doc(db, 'stores', activeStore.id, 'transactions', transaction.id);
                 batch.update(tenantTransactionRef, { status: 'Siap Diambil' });
                 successMessage = `Pesanan Anda untuk nota #${String(transaction.receiptNumber).padStart(6, '0')} telah ditandai siap.`;
