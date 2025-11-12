@@ -131,6 +131,7 @@ export type Transaction = {
   tableId?: string; // Optional table reference
   status: TransactionStatus;
   generatedFollowUpText?: string;
+  pujaseraGroupSlug?: string;
 };
 
 export type TransactionItem = {
@@ -152,6 +153,7 @@ export type OrderPayload = {
     taxAmount: number;
     serviceFeeAmount: number;
     totalAmount: number;
+    paymentMethod: 'kasir' | 'qris';
 };
 
 export type PendingOrder = {
@@ -200,6 +202,7 @@ export type TableOrder = {
   totalAmount: number;
   orderTime: string; // ISO 8601
   customer?: TableOrderCustomer;
+  paymentMethod?: 'kasir' | 'qris';
 };
 
 export type Table = {

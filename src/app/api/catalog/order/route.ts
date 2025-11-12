@@ -1,4 +1,3 @@
-
 import { NextRequest, NextResponse } from 'next/server';
 import { getFirebaseAdmin } from '@/lib/server/firebase-admin';
 import type { OrderPayload, Table, TableOrder } from '@/lib/types';
@@ -8,9 +7,9 @@ export async function POST(req: NextRequest) {
     const { db } = getFirebaseAdmin();
     try {
         const payload: OrderPayload = await req.json();
-        const { storeId: pujaseraId, customer, cart, subtotal, taxAmount, serviceFeeAmount, totalAmount } = payload;
+        const { storeId: pujaseraId, customer, cart, subtotal, taxAmount, serviceFeeAmount, totalAmount, paymentMethod } = payload;
 
-        if (!pujaseraId || !customer || !cart || cart.length === 0) {
+        if (!pujaseraId || !customer || !cart || cart.length === 0 || !paymentMethod) {
             return NextResponse.json({ error: 'Data pesanan tidak lengkap.' }, { status: 400 });
         }
 
@@ -29,6 +28,7 @@ export async function POST(req: NextRequest) {
                 phone: customer.phone,
                 avatarUrl: customer.avatarUrl
             },
+            paymentMethod: paymentMethod, // Save the chosen payment method
         };
 
         const currentCounter = (await pujaseraStoreRef.get()).data()?.virtualTableCounter || 0;

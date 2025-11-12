@@ -1,5 +1,3 @@
-
-
 'use client';
 
 import * as React from 'react';
@@ -33,6 +31,7 @@ import {
   MessageSquare,
   Store as StoreIcon,
   Share2,
+  QrCode,
 } from 'lucide-react';
 import Image from 'next/image';
 import { Separator } from '@/components/ui/separator';
@@ -215,6 +214,14 @@ export default function POS({ onPrintRequest }: POSProps) {
                     setSelectedCustomer(customerFromOrder);
                 }
             }
+            
+            // Set payment method based on what customer chose in catalog
+            if (table.currentOrder.paymentMethod === 'qris') {
+                setPaymentMethod('QRIS');
+            } else {
+                setPaymentMethod('Cash');
+            }
+
             toast({
                 title: 'Pesanan Dimuat',
                 description: `Pesanan dari meja ${table.name} telah dimuat ke keranjang.`
@@ -628,6 +635,13 @@ export default function POS({ onPrintRequest }: POSProps) {
                   </div>
                 </div>
               )}
+                
+              {tableId && tables.find(t => t.id === tableId)?.currentOrder?.paymentMethod === 'qris' && (
+                <Badge variant="outline" className="border-sky-500 text-sky-600 justify-center py-1">
+                    <QrCode className="mr-2 h-4 w-4"/> Pelanggan memilih bayar dengan QRIS
+                </Badge>
+              )}
+
 
               <Separator />
 
@@ -887,4 +901,3 @@ export default function POS({ onPrintRequest }: POSProps) {
     </>
   );
 }
-

@@ -434,6 +434,7 @@ export default function CatalogPage() {
                 customer: loggedInCustomer,
                 cart: cart,
                 subtotal: cartSubtotal, taxAmount, serviceFeeAmount, totalAmount,
+                paymentMethod: paymentMethod,
             };
             const response = await fetch('/api/catalog/order', {
                 method: 'POST',

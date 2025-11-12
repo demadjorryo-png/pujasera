@@ -1,5 +1,3 @@
-
-
 'use client';
 
 import * as React from 'react';
@@ -41,7 +39,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { PlusCircle, Armchair, Trash2, Edit, MoreVertical, Check, BookMarked, SprayCan, Loader2, ServerCog } from 'lucide-react';
+import { PlusCircle, Armchair, Trash2, Edit, MoreVertical, Check, BookMarked, SprayCan, Loader2, ServerCog, QrCode } from 'lucide-react';
 import type { Table, TableStatus } from '@/lib/types';
 import { useAuth } from '@/contexts/auth-context';
 import { useDashboard } from '@/contexts/dashboard-context';
@@ -259,7 +257,8 @@ export default function Tables() {
   const handleTableClick = (table: Table) => {
     if (table.status === 'Tersedia' || table.status === 'Dipesan' || table.status === 'Terisi') {
       const params = new URLSearchParams();
-      params.set('view', 'pos');
+      const view = currentUser?.role === 'pujasera_admin' || currentUser?.role === 'pujasera_cashier' ? 'pujasera-pos' : 'pos';
+      params.set('view', view);
       params.set('tableId', table.id);
       params.set('tableName', table.name);
       router.push(`/dashboard?${params.toString()}`);
@@ -448,7 +447,10 @@ export default function Tables() {
                   )}
                 </CardHeader>
                 <CardContent className="p-0 mt-2">
-                    <Badge variant={'secondary'} className={cn('font-semibold', getBadgeStyle(table.status))}>{table.status}</Badge>
+                    <div className="flex items-center gap-2">
+                        <Badge variant={'secondary'} className={cn('font-semibold', getBadgeStyle(table.status))}>{table.status}</Badge>
+                        {table.currentOrder?.paymentMethod === 'qris' && table.status === 'Terisi' && <QrCode className="h-4 w-4 text-sky-600" />}
+                    </div>
                 </CardContent>
                 <CardFooter className="p-0 mt-2 text-xs text-muted-foreground">
                     {table.status === 'Terisi' && table.currentOrder ? (
