@@ -1,10 +1,11 @@
+
 'use client';
 
 import * as React from 'react';
 import type { User, Store } from '@/lib/types';
 import { auth, db } from '@/lib/firebase';
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { doc, getDoc, collection, getDocs, query, where } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, query, where, limit } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { FirebaseError } from 'firebase/app';
@@ -109,12 +110,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Determine the store context based on user role
         if (userData.role === 'pujasera_admin') {
             isPujaseraAdmin = true;
-            storeIdToLoad = userData.storeId; // The pujasera admin's storeId is the pujasera's own document ID
+            storeIdToLoad = userData.storeId;
         } else if (userData.role === 'pujasera_cashier') {
              if (userData.pujaseraGroupSlug) {
                 const q = query(collection(db, 'stores'), where('pujaseraGroupSlug', '==', userData.pujaseraGroupSlug), limit(1));
                 const snapshot = await getDocs(q);
                 if (!snapshot.empty) storeIdToLoad = snapshot.docs[0].id;
+             } else if(userData.storeId) { // Fallback for older pujasera_cashier documents
+                storeIdToLoad = userData.storeId;
              }
         } else if (userData.role === 'admin') {
             const storesQuery = query(collection(db, 'stores'), where('adminUids', 'array-contains', user.uid));

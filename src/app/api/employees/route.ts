@@ -24,10 +24,15 @@ export async function POST(req: NextRequest) {
     const callerDocRef = db.collection('users').doc(callerUid);
     const callerDoc = await callerDocRef.get();
     
-    const callerRole = callerDoc.data()?.role;
+    if (!callerDoc.exists) {
+      return NextResponse.json({ error: 'Permission denied: Caller document not found.' }, { status: 403 });
+    }
+    
+    const callerData = callerDoc.data();
+    const callerRole = callerData?.role;
     const allowedRoles = ['admin', 'pujasera_admin'];
 
-    if (!callerDoc.exists || !callerRole || !allowedRoles.includes(callerRole)) {
+    if (!callerRole || !allowedRoles.includes(callerRole)) {
       return NextResponse.json({ error: 'Permission denied: Only admins can create employees.' }, { status: 403 });
     }
 
@@ -47,13 +52,20 @@ export async function POST(req: NextRequest) {
     const batch = db.batch();
 
     const userDocRef = db.collection('users').doc(newUserId);
-    batch.set(userDocRef, {
+    const newUserDocData: { [key: string]: any } = {
       name,
       email,
       role,
       status: 'active',
       storeId,
-    });
+    };
+    
+    // If the creator is a pujasera_admin, pass their group slug to the new employee
+    if (callerRole === 'pujasera_admin' && callerData.pujaseraGroupSlug) {
+        newUserDocData.pujaseraGroupSlug = callerData.pujaseraGroupSlug;
+    }
+
+    batch.set(userDocRef, newUserDocData);
 
     if (role === 'admin') {
       const storeRef = db.collection('stores').doc(storeId);
