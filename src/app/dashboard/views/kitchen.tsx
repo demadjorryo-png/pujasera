@@ -1,3 +1,4 @@
+
 'use client';
 
 import * as React from 'react';
@@ -9,7 +10,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { id as idLocale } from 'date-fns/locale';
 import { Button } from '@/components/ui/button';
 import { CheckCircle, ChefHat, Loader, MessageSquare, Printer, Send, Store } from 'lucide-react';
-import { doc, writeBatch, getDoc, collection, query, where, getDocs, updateDoc } from 'firebase/firestore';
+import { doc, writeBatch, getDoc, collection, query, where, getDocs, updateDoc, runTransaction } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/contexts/auth-context';
 import { Badge } from '@/components/ui/badge';
@@ -25,9 +26,11 @@ type KitchenProps = {
 // This represents a "view" of an order for a specific tenant
 type TenantOrderSlice = {
     parentTransaction: Transaction;
+    subTransactionId?: string; // The ID of the tenant's own transaction document
     tenantStoreId: string;
     tenantStoreName: string;
     items: CartItem[];
+    status: 'Diproses' | 'Siap Diambil';
 };
 
 
@@ -47,9 +50,11 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
             // For regular tenants, their transactions are their slices
             return activeTransactions.filter(t => t.storeId === activeStore?.id).map(tx => ({
                 parentTransaction: tx,
+                subTransactionId: tx.id,
                 tenantStoreId: tx.storeId,
                 tenantStoreName: activeStore?.name || 'Toko Anda',
                 items: tx.items,
+                status: tx.status as 'Diproses' | 'Siap Diambil',
             }));
         }
         
@@ -72,11 +77,11 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                     tenantStoreId: tenantId,
                     tenantStoreName: data.storeName,
                     items: data.items,
+                    status: tx.itemsStatus?.[tenantId] || 'Diproses'
                 });
             });
         });
         
-        // Sort all slices by the original transaction time
         return slices.sort((a, b) => new Date(a.parentTransaction.createdAt).getTime() - new Date(b.parentTransaction.createdAt).getTime());
 
     }, [transactions, isPujaseraUser, activeStore]);
@@ -87,53 +92,60 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
         setProcessingId(slice.parentTransaction.id + slice.tenantStoreId);
 
         try {
-            const batch = writeBatch(db);
-            let successMessage = '';
-            
-            if (action === 'complete') { // This action is only for the whole pujasera transaction
-                 const transactionRef = doc(db, 'stores', activeStore.id, 'transactions', slice.parentTransaction.id);
-                 const transactionDoc = await getDoc(transactionRef);
-                 if (!transactionDoc.exists()) throw new Error("Transaksi tidak ditemukan.");
+            if (action === 'complete') { // Action for pujasera admin to finalize the whole order
+                 await runTransaction(db, async (transaction) => {
+                    const transactionRef = doc(db, 'stores', activeStore.id, 'transactions', slice.parentTransaction.id);
+                    transaction.update(transactionRef, { status: 'Selesai' });
 
-                batch.update(transactionRef, { status: 'Selesai' });
-                successMessage = `Pesanan untuk ${slice.parentTransaction.customerName} telah ditandai selesai.`;
-
-                if (slice.parentTransaction.tableId) {
-                    const tableRef = doc(db, 'stores', activeStore.id, 'tables', slice.parentTransaction.tableId);
-                    const tableDoc = await getDoc(tableRef);
-                    if (tableDoc.exists()) {
-                        if (tableDoc.data()?.isVirtual) {
-                            batch.delete(tableRef);
-                        } else {
-                            batch.update(tableRef, { status: 'Menunggu Dibersihkan', currentOrder: null });
+                    if (slice.parentTransaction.tableId) {
+                        const tableRef = doc(db, 'stores', activeStore.id, 'tables', slice.parentTransaction.tableId);
+                        const tableDoc = await transaction.get(tableRef);
+                        if (tableDoc.exists()) {
+                             if (tableDoc.data()?.isVirtual) {
+                                transaction.delete(tableRef);
+                            } else {
+                                transaction.update(tableRef, { status: 'Menunggu Dibersihkan', currentOrder: null });
+                            }
                         }
                     }
-                }
-            } else if (action === 'ready') {
-                // When a tenant marks their part as ready, they are updating their OWN sub-transaction.
-                // We need to find the correct sub-transaction document.
-                const subTransactionQuery = await getDocs(query(collection(db, 'stores', slice.tenantStoreId, 'transactions'), where('receiptNumber', '==', slice.parentTransaction.receiptNumber)));
-                
-                if (!subTransactionQuery.empty) {
-                    // This is a pujasera flow, update the specific sub-transaction for the tenant
-                    const subTransactionRef = subTransactionQuery.docs[0].ref;
-                    await updateDoc(subTransactionRef, { status: 'Siap Diambil' });
-                } else {
-                    // This is a regular (non-pujasera) flow, or a fallback. Update the main transaction.
-                    const mainTransactionRef = doc(db, 'stores', slice.tenantStoreId, 'transactions', slice.parentTransaction.id);
-                    await updateDoc(mainTransactionRef, { status: 'Siap Diambil' });
-                }
+                 });
 
-                successMessage = `Pesanan dari ${slice.tenantStoreName} (Nota #${String(slice.parentTransaction.receiptNumber).padStart(6, '0')}) telah ditandai siap.`;
+                toast({ title: 'Status Diperbarui!', description: `Pesanan untuk ${slice.parentTransaction.customerName} telah ditandai selesai.`});
+            
+            } else if (action === 'ready') { // Action for tenant or pujasera admin on behalf of tenant
+                
+                await runTransaction(db, async (transaction) => {
+                    // Find the sub-transaction document for the tenant
+                    const q = query(collection(db, 'stores', slice.tenantStoreId, 'transactions'), where('receiptNumber', '==', slice.parentTransaction.receiptNumber), where('storeId', '==', slice.tenantStoreId));
+                    const subTransactionSnapshot = await getDocs(q);
+
+                    let subTransactionRef;
+                    if (!subTransactionSnapshot.empty) {
+                        subTransactionRef = subTransactionSnapshot.docs[0].ref;
+                    } else if (slice.parentTransaction.id) {
+                        // Fallback for non-pujasera or if sub-transaction not found by receipt number
+                        subTransactionRef = doc(db, 'stores', slice.tenantStoreId, 'transactions', slice.parentTransaction.id);
+                    } else {
+                        throw new Error("Tidak dapat menemukan referensi transaksi yang valid untuk diperbarui.");
+                    }
+                    
+                    // 1. Update the tenant's sub-transaction status
+                    transaction.update(subTransactionRef, { status: 'Siap Diambil' });
+
+                    // 2. Update the main pujasera transaction's itemsStatus map
+                    if (slice.parentTransaction.pujaseraGroupSlug) {
+                        const mainTransactionRef = doc(db, 'stores', slice.parentTransaction.pujaseraId, 'transactions', slice.parentTransaction.parentTransactionId);
+                        transaction.update(mainTransactionRef, {
+                            [`itemsStatus.${slice.tenantStoreId}`]: 'Siap Diambil'
+                        });
+                    }
+                });
+
+                toast({ title: 'Status Diperbarui!', description: `Pesanan dari ${slice.tenantStoreName} telah ditandai siap.` });
             }
 
-            await batch.commit();
-
-            toast({
-                title: 'Status Diperbarui!',
-                description: successMessage,
-            });
             refreshData();
+
         } catch (error) {
             console.error("Error processing kitchen action:", error);
             toast({
@@ -146,7 +158,7 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
         }
     };
     
-    const getStatusBadge = (status: TransactionStatus) => {
+    const getStatusBadge = (status: 'Diproses' | 'Siap Diambil') => {
         switch(status) {
             case 'Diproses':
                 return <Badge variant="secondary" className='bg-amber-500/20 text-amber-800 border-amber-500/50'>{status}</Badge>;
@@ -161,10 +173,10 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
     return (
         <div className="h-[calc(100vh-8rem)] flex flex-col">
             <ScrollArea className="flex-grow">
-                <div className={cn("p-1", isPujaseraUser ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4" : "space-y-4")}>
+                <div className={cn("p-1 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4")}>
                     {tenantOrderSlices.length > 0 ? (
                         tenantOrderSlices.map((slice, idx) => {
-                            const { parentTransaction, tenantStoreName, items } = slice;
+                            const { parentTransaction, tenantStoreName, items, status } = slice;
                             const tableName = tables.find(t => t.id === parentTransaction.tableId)?.name;
                             const uniqueKey = `${parentTransaction.id}-${slice.tenantStoreId}-${idx}`;
 
@@ -173,11 +185,7 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                                 <CardHeader>
                                     <div className='flex justify-between items-start'>
                                         <div>
-                                            {isPujaseraUser ? (
-                                                <CardTitle className="flex items-center gap-2 text-base"><Store className="h-4 w-4"/>{tenantStoreName}</CardTitle>
-                                            ) : (
-                                                <CardTitle>{parentTransaction.customerName}</CardTitle>
-                                            )}
+                                            <CardTitle className="flex items-center gap-2 text-base"><Store className="h-4 w-4"/>{tenantStoreName}</CardTitle>
                                             <CardDescription>
                                                 Nota: {String(parentTransaction.receiptNumber).padStart(6, '0')}
                                                 {tableName && ` • Meja: ${tableName}`}
@@ -185,9 +193,9 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                                                 {formatDistanceToNow(new Date(parentTransaction.createdAt), { addSuffix: true, locale: idLocale })}
                                             </CardDescription>
                                         </div>
-                                        {getStatusBadge(parentTransaction.status)}
+                                        {getStatusBadge(status)}
                                     </div>
-                                    {isPujaseraUser && <CardTitle className="text-lg pt-2">{parentTransaction.customerName}</CardTitle>}
+                                    <CardTitle className="text-lg pt-2">{parentTransaction.customerName}</CardTitle>
                                 </CardHeader>
                                 <CardContent className="flex-grow space-y-2">
                                      {items.map((item, index) => (
@@ -233,7 +241,7 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                                         <Button 
                                             className="w-full" 
                                             onClick={() => handleAction(slice, 'ready')}
-                                            disabled={processingId === (parentTransaction.id + slice.tenantStoreId) || parentTransaction.status === 'Siap Diambil'}
+                                            disabled={processingId === (parentTransaction.id + slice.tenantStoreId) || status === 'Siap Diambil'}
                                         >
                                             {processingId === (parentTransaction.id + slice.tenantStoreId) ? <Loader className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
                                             Pesanan Siap

@@ -104,14 +104,14 @@ export const onPujaseraTransactionCreate = onDocumentCreated("stores/{pujaseraId
 
     const transactionData = transactionSnapshot.data();
     const pujaseraId = event.params.pujaseraId;
+    const transactionId = event.params.transactionId;
 
     // Only proceed if this transaction is a main pujasera transaction and is marked 'Diproses'
-    // This is the main guard to prevent the function from processing sub-transactions or completed ones.
     if (!transactionData.pujaseraGroupSlug || transactionData.status !== 'Diproses') {
         return;
     }
 
-    logger.info(`Processing pujasera transaction ${transactionSnapshot.id} for distribution.`);
+    logger.info(`Processing pujasera transaction ${transactionId} for distribution.`);
 
     const batch = db.batch();
 
@@ -126,6 +126,8 @@ export const onPujaseraTransactionCreate = onDocumentCreated("stores/{pujaseraId
             itemsByTenant[item.storeId].push(item);
         }
         
+        const itemsStatus: { [key: string]: 'Diproses' | 'Siap Diambil' } = {};
+
         // Create a sub-transaction for each tenant
         for (const tenantId in itemsByTenant) {
             const tenantItems = itemsByTenant[tenantId];
@@ -140,21 +142,29 @@ export const onPujaseraTransactionCreate = onDocumentCreated("stores/{pujaseraId
                 createdAt: transactionData.createdAt,
                 items: tenantItems,
                 subtotal: tenantSubtotal,
-                taxAmount: 0, // Tax is handled at the central level
-                serviceFeeAmount: 0, // Service fee is handled at the central level
-                discountAmount: 0, // Discount is handled at the central level
-                totalAmount: tenantSubtotal, // Total for this tenant's items only
-                paymentMethod: transactionData.paymentMethod, // Inherit payment method from main transaction
-                status: 'Diproses', // This will appear in the tenant's kitchen view
-                pointsEarned: 0, // Points are handled at the central level
-                pointsRedeemed: 0, // Points are handled at the central level
-                notes: `Bagian dari pesanan pujasera #${String(transactionData.receiptNumber).padStart(6, '0')}`
+                taxAmount: 0,
+                serviceFeeAmount: 0,
+                discountAmount: 0,
+                totalAmount: tenantSubtotal,
+                paymentMethod: transactionData.paymentMethod, // Inherit payment method
+                status: 'Diproses',
+                pointsEarned: 0,
+                pointsRedeemed: 0,
+                notes: `Bagian dari pesanan pujasera #${String(transactionData.receiptNumber).padStart(6, '0')}`,
+                parentTransactionId: transactionId, // Add reference to parent transaction
+                pujaseraId: pujaseraId,
             };
 
             const newTenantTransactionRef = db.collection('stores').doc(tenantId).collection('transactions').doc();
             batch.set(newTenantTransactionRef, tenantTransactionData);
+            
+            // Initialize item status tracking for the main transaction
+            itemsStatus[tenantId] = 'Diproses';
         }
         
+        const mainTransactionRef = db.doc(`stores/${pujaseraId}/transactions/${transactionId}`);
+        batch.update(mainTransactionRef, { itemsStatus: itemsStatus });
+
         // Update customer points if applicable
         if (transactionData.customerId !== 'N/A' && (transactionData.pointsEarned > 0 || transactionData.pointsRedeemed > 0)) {
             const customerRef = db.collection('stores').doc(pujaseraId).collection('customers').doc(transactionData.customerId);
@@ -180,7 +190,6 @@ export const onPujaseraTransactionCreate = onDocumentCreated("stores/{pujaseraId
         });
 
         // Finally, clear the virtual table if it was a catalog order.
-        // For physical tables, wait for the 'complete' action in the kitchen view.
         if (transactionData.tableId) {
             const tableRef = db.doc(`stores/${pujaseraId}/tables/${transactionData.tableId}`);
             const tableDoc = await tableRef.get();
@@ -190,10 +199,10 @@ export const onPujaseraTransactionCreate = onDocumentCreated("stores/{pujaseraId
         }
 
         await batch.commit();
-        logger.info(`Successfully distributed transaction ${transactionSnapshot.id} to ${Object.keys(itemsByTenant).length} tenants.`);
+        logger.info(`Successfully distributed transaction ${transactionId} to ${Object.keys(itemsByTenant).length} tenants.`);
 
     } catch (error) {
-        logger.error(`Error processing pujasera transaction ${transactionSnapshot.id}:`, error);
+        logger.error(`Error processing pujasera transaction ${transactionId}:`, error);
     }
 });
 
