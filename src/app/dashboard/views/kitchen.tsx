@@ -1,4 +1,3 @@
-
 'use client';
 
 import * as React from 'react';
@@ -90,62 +89,55 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
     const handleAction = async (slice: TenantOrderSlice, action: 'complete' | 'ready') => {
         if (!activeStore) return;
         setProcessingId(slice.parentTransaction.id + slice.tenantStoreId);
-
+    
         try {
-            if (action === 'complete') { // Action for pujasera admin to finalize the whole order
-                 await runTransaction(db, async (transaction) => {
+            if (action === 'complete') {
+                await runTransaction(db, async (transaction) => {
                     const transactionRef = doc(db, 'stores', activeStore.id, 'transactions', slice.parentTransaction.id);
                     transaction.update(transactionRef, { status: 'Selesai' });
-
+    
                     if (slice.parentTransaction.tableId) {
                         const tableRef = doc(db, 'stores', activeStore.id, 'tables', slice.parentTransaction.tableId);
                         const tableDoc = await transaction.get(tableRef);
                         if (tableDoc.exists()) {
-                             if (tableDoc.data()?.isVirtual) {
+                            if (tableDoc.data()?.isVirtual) {
                                 transaction.delete(tableRef);
                             } else {
                                 transaction.update(tableRef, { status: 'Menunggu Dibersihkan', currentOrder: null });
                             }
                         }
                     }
-                 });
-
+                });
+    
                 toast({ title: 'Status Diperbarui!', description: `Pesanan untuk ${slice.parentTransaction.customerName} telah ditandai selesai.`});
             
-            } else if (action === 'ready') { // Action for tenant or pujasera admin on behalf of tenant
-                
-                await runTransaction(db, async (transaction) => {
-                    // Find the sub-transaction document for the tenant
-                    const q = query(collection(db, 'stores', slice.tenantStoreId, 'transactions'), where('receiptNumber', '==', slice.parentTransaction.receiptNumber), where('storeId', '==', slice.tenantStoreId));
-                    const subTransactionSnapshot = await getDocs(q);
-
-                    let subTransactionRef;
-                    if (!subTransactionSnapshot.empty) {
-                        subTransactionRef = subTransactionSnapshot.docs[0].ref;
-                    } else if (slice.parentTransaction.id) {
-                        // Fallback for non-pujasera or if sub-transaction not found by receipt number
-                        subTransactionRef = doc(db, 'stores', slice.tenantStoreId, 'transactions', slice.parentTransaction.id);
-                    } else {
-                        throw new Error("Tidak dapat menemukan referensi transaksi yang valid untuk diperbarui.");
-                    }
-                    
-                    // 1. Update the tenant's sub-transaction status
-                    transaction.update(subTransactionRef, { status: 'Siap Diambil' });
-
-                    // 2. Update the main pujasera transaction's itemsStatus map
-                    if (slice.parentTransaction.pujaseraGroupSlug) {
-                        const mainTransactionRef = doc(db, 'stores', slice.parentTransaction.pujaseraId, 'transactions', slice.parentTransaction.parentTransactionId);
-                        transaction.update(mainTransactionRef, {
-                            [`itemsStatus.${slice.tenantStoreId}`]: 'Siap Diambil'
-                        });
-                    }
+            } else if (action === 'ready') {
+                // Perform reads BEFORE the transaction
+                const q = query(
+                    collection(db, 'stores', slice.tenantStoreId, 'transactions'),
+                    where('parentTransactionId', '==', slice.parentTransaction.id)
+                );
+                const subTransactionSnapshot = await getDocs(q);
+    
+                if (subTransactionSnapshot.empty) {
+                    throw new Error(`Sub-transaksi untuk tenant ${slice.tenantStoreName} dengan nota ${slice.parentTransaction.receiptNumber} tidak ditemukan.`);
+                }
+                const subTransactionRef = subTransactionSnapshot.docs[0].ref;
+                const mainTransactionRef = doc(db, 'stores', activeStore.id, 'transactions', slice.parentTransaction.id);
+    
+                await runTransaction(db, async (dbTransaction) => {
+                    // Perform writes inside the transaction
+                    dbTransaction.update(subTransactionRef, { status: 'Siap Diambil' });
+                    dbTransaction.update(mainTransactionRef, {
+                        [`itemsStatus.${slice.tenantStoreId}`]: 'Siap Diambil'
+                    });
                 });
-
+    
                 toast({ title: 'Status Diperbarui!', description: `Pesanan dari ${slice.tenantStoreName} telah ditandai siap.` });
             }
-
+    
             refreshData();
-
+    
         } catch (error) {
             console.error("Error processing kitchen action:", error);
             toast({
