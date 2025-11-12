@@ -73,6 +73,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const { currentUser, activeStore, pujaseraTenants, isLoading: isAuthLoading, refreshPradanaTokenBalance } = useAuth();
   const { toast } = useToast();
   const notificationAudioRef = useRef<HTMLAudioElement>(null);
+  const notifiedTransactionsRef = useRef<Set<string>>(new Set());
 
   const [stores, setStores] = useState<Store[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -194,45 +195,37 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
     if (storeId) {
         
-        const setupTransactionListener = (targetStoreId: string) => {
-            const transactionsQuery = query(collection(db, 'stores', targetStoreId, 'transactions'), orderBy('createdAt', 'desc'));
+        const setupTransactionListener = () => {
+            const allStoreIds = isPujaseraUser 
+                ? Array.from(new Set([storeId, ...pujaseraTenants.map(t => t.id)]))
+                : [storeId];
+                
+            const transactionsQuery = query(collectionGroup(db, 'transactions'), where('storeId', 'in', allStoreIds));
+
             return onSnapshot(transactionsQuery, (snapshot) => {
                 const newTransactions = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
                 
-                setTransactions(prevTransactions => {
-                    const prevTxIds = new Set(prevTransactions.map(t => t.id));
-                    const justAdded = newTransactions.filter(t => !prevTxIds.has(t.id));
-
-                    // Only notify for new orders that are in 'Diproses' state
-                    const newOrders = justAdded.filter(t => t.status === 'Diproses');
-                    if (newOrders.length > 0) {
-                        playNotificationSound();
-                        newOrders.forEach(order => {
-                            // Defer toast to next tick to avoid state update during render
-                            setTimeout(() => {
+                 snapshot.docChanges().forEach((change) => {
+                    if (change.type === "added") {
+                        const newTx = change.doc.data() as Transaction;
+                        if (newTx.status === 'Diproses' && !notifiedTransactionsRef.current.has(change.doc.id)) {
+                             setTimeout(() => {
                                 toast({
                                     title: "🔔 Pesanan Baru Masuk!",
-                                    description: `Ada pesanan baru untuk nota #${String(order.receiptNumber).padStart(6, '0')}.`,
+                                    description: `Ada pesanan baru untuk nota #${String(newTx.receiptNumber).padStart(6, '0')}.`,
                                 });
+                                playNotificationSound();
                             }, 0);
-                        });
+                            notifiedTransactionsRef.current.add(change.doc.id);
+                        }
                     }
-
-                    // Rebuild the full transaction list
-                    const otherTransactions = prevTransactions.filter(t => t.storeId !== targetStoreId);
-                    return [...otherTransactions, ...newTransactions];
                 });
-            }, (error) => console.error(`Error listening to transactions for store ${targetStoreId}:`, error));
+
+                setTransactions(newTransactions);
+            }, (error) => console.error(`Error listening to transactions:`, error));
         };
         
-        if (isPujaseraUser) {
-            const allStoreIds = new Set([storeId, ...pujaseraTenants.map(t => t.id)]);
-            allStoreIds.forEach(id => {
-                unsubscribes.push(setupTransactionListener(id));
-            });
-        } else {
-            unsubscribes.push(setupTransactionListener(storeId));
-        }
+        unsubscribes.push(setupTransactionListener());
 
         // Listen to tables for all users with an active store
         const tablesQuery = query(collection(db, 'stores', storeId, 'tables'), orderBy('name'));
