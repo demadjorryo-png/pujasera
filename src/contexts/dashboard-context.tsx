@@ -1,3 +1,4 @@
+
 'use client';
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode, useRef } from 'react';
 import { db } from '@/lib/firebase';
@@ -192,84 +193,49 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     const storeId = activeStore?.id;
 
     if (storeId) {
-        if (isPujaseraUser) {
-            // For pujasera users, listen to transactions from the main pujasera store
-            // AND from all associated tenant stores.
-            const pujaseraTxQuery = query(collection(db, 'stores', storeId, 'transactions'), orderBy('createdAt', 'desc'));
-            const unsubPujaseraTxs = onSnapshot(pujaseraTxQuery, (snapshot) => {
-                const pujaseraTxs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
-                setTransactions(currentTxs => {
-                    // Combine with tenant-level transactions, filtering out old pujasera ones
-                    const tenantTxs = currentTxs.filter(t => t.storeId !== storeId);
-                    const allTxs = [...tenantTxs, ...pujaseraTxs];
-                    return Array.from(new Map(allTxs.map(t => [t.id, t])).values());
-                });
-            }, (error) => console.error("Error listening to pujasera transactions:", error));
-            unsubscribes.push(unsubPujaseraTxs);
-
-            // Now, listen to each tenant's transactions individually
-            pujaseraTenants.forEach(tenant => {
-                // Don't listen to the pujasera's own transactions again
-                if (tenant.id === storeId) return;
-
-                const tenantTxQuery = query(collection(db, 'stores', tenant.id, 'transactions'), orderBy('createdAt', 'desc'));
-                const unsubTenant = onSnapshot(tenantTxQuery, (snapshot) => {
-                    const tenantTxs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
-                    setTransactions(currentTxs => {
-                         // Combine with all other transactions, replacing this tenant's old data
-                        const otherTxs = currentTxs.filter(t => t.storeId !== tenant.id);
-                        const allTxs = [...otherTxs, ...tenantTxs];
-                        return Array.from(new Map(allTxs.map(t => [t.id, t])).values());
-                    });
-                }, (error) => console.error(`Error listening to transactions for tenant ${tenant.name}:`, error));
-                unsubscribes.push(unsubTenant);
-            });
-
-        } else {
-            // For regular tenant users, listen only to their own store's transactions
-            const transactionsQuery = query(collection(db, 'stores', storeId, 'transactions'), orderBy('createdAt', 'desc'));
-            const unsubTransactions = onSnapshot(transactionsQuery, (snapshot) => {
+        
+        const setupTransactionListener = (targetStoreId: string) => {
+            const transactionsQuery = query(collection(db, 'stores', targetStoreId, 'transactions'), orderBy('createdAt', 'desc'));
+            return onSnapshot(transactionsQuery, (snapshot) => {
+                const newTransactions = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
+                
                 setTransactions(prevTransactions => {
-                  const newTransactions = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
-                  if (prevTransactions.length > 0) {
-                      const prevTxIds = new Set(prevTransactions.map(t => t.id));
-                      const justAdded = newTransactions.filter(t => !prevTxIds.has(t.id));
-                      if (justAdded.some(t => t.status === 'Diproses')) {
+                    const prevTxIds = new Set(prevTransactions.map(t => t.id));
+                    const justAdded = newTransactions.filter(t => !prevTxIds.has(t.id));
+
+                    // Only notify for new orders that are in 'Diproses' state
+                    const newOrders = justAdded.filter(t => t.status === 'Diproses');
+                    if (newOrders.length > 0) {
                         playNotificationSound();
-                        toast({
-                            title: "🔔 Pesanan Baru untuk Dapur!",
-                            description: `Ada pesanan baru yang perlu disiapkan.`,
+                        newOrders.forEach(order => {
+                            toast({
+                                title: "🔔 Pesanan Baru Masuk!",
+                                description: `Ada pesanan baru untuk nota #${String(order.receiptNumber).padStart(6, '0')}.`,
+                            });
                         });
-                      }
-                  }
-                  return newTransactions;
+                    }
+
+                    // Rebuild the full transaction list
+                    const otherTransactions = prevTransactions.filter(t => t.storeId !== targetStoreId);
+                    return [...otherTransactions, ...newTransactions];
                 });
-            }, (error) => console.error("Error listening to transactions: ", error));
-            unsubscribes.push(unsubTransactions);
+            }, (error) => console.error(`Error listening to transactions for store ${targetStoreId}:`, error));
+        };
+        
+        if (isPujaseraUser) {
+            const allStoreIds = new Set([storeId, ...pujaseraTenants.map(t => t.id)]);
+            allStoreIds.forEach(id => {
+                unsubscribes.push(setupTransactionListener(id));
+            });
+        } else {
+            unsubscribes.push(setupTransactionListener(storeId));
         }
 
         // Listen to tables for all users with an active store
         const tablesQuery = query(collection(db, 'stores', storeId, 'tables'), orderBy('name'));
         const unsubTables = onSnapshot(tablesQuery, (snapshot) => {
             const newTables = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Table));
-            setTables(prevTables => {
-                if (prevTables.length > 0) {
-                    const prevTableIds = new Set(prevTables.map(t => t.id));
-                    const newVirtualOrders = newTables.filter(t => 
-                        !prevTableIds.has(t.id) && t.isVirtual && t.currentOrder
-                    );
-                    if (newVirtualOrders.length > 0) {
-                        playNotificationSound();
-                        newVirtualOrders.forEach(table => {
-                             toast({
-                                title: "🔔 Pesanan Baru Masuk!",
-                                description: `Ada pesanan baru di ${table.name}.`,
-                            });
-                        });
-                    }
-                }
-                return newTables;
-            });
+            setTables(newTables);
         }, (error) => console.error("Error listening to tables: ", error));
         unsubscribes.push(unsubTables);
 
