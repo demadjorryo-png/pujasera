@@ -124,9 +124,20 @@ export const onPujaseraTransactionCreate = onDocumentCreated("stores/{pujaseraId
             }
             itemsByTenant[item.storeId].push(item);
         }
+        
+        // Fetch all tenants' data in parallel to get their current transaction counters
+        const tenantRefs = Object.keys(itemsByTenant).map(tenantId => db.doc(`stores/${tenantId}`));
+        const tenantDocs = await db.getAll(...tenantRefs);
+        const tenantDataMap = new Map(tenantDocs.map(doc => [doc.id, doc.data()]));
 
         // Create a sub-transaction for each tenant
         for (const tenantId in itemsByTenant) {
+            const tenantData = tenantDataMap.get(tenantId);
+            if (!tenantData) {
+                logger.warn(`Tenant data for ID ${tenantId} not found, skipping distribution for these items.`);
+                continue;
+            }
+
             const tenantItems = itemsByTenant[tenantId];
             const tenantSubtotal = tenantItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
@@ -152,9 +163,6 @@ export const onPujaseraTransactionCreate = onDocumentCreated("stores/{pujaseraId
 
             const newTenantTransactionRef = db.collection('stores').doc(tenantId).collection('transactions').doc();
             batch.set(newTenantTransactionRef, tenantTransactionData);
-            
-            // NOTE: We no longer increment the tenant's personal transaction counter
-            // as the receipt number is now centralized.
         }
         
         // Update customer points if applicable
@@ -177,19 +185,19 @@ export const onPujaseraTransactionCreate = onDocumentCreated("stores/{pujaseraId
         const feeCappedAtMax = Math.min(feeCappedAtMin, maxFeeRp);
         const transactionFee = feeCappedAtMax / tokenValueRp;
         
+        // The main transaction counter is already incremented when the main transaction is created.
+        // This function should ONLY deduct tokens.
         batch.update(db.doc(`stores/${pujaseraId}`), { 
-            transactionCounter: FieldValue.increment(1),
             pradanaTokenBalance: FieldValue.increment(-transactionFee)
         });
 
-        // Finally, clear the virtual table if it was a catalog order
+        // Finally, clear the virtual table if it was a catalog order.
+        // For physical tables, wait for the 'complete' action in the kitchen view.
         if (transactionData.tableId) {
             const tableRef = db.doc(`stores/${pujaseraId}/tables/${transactionData.tableId}`);
             const tableDoc = await tableRef.get();
             if (tableDoc.exists && tableDoc.data()?.isVirtual) {
                 batch.delete(tableRef);
-            } else if (tableDoc.exists) {
-                // For physical tables, don't clear it yet, wait for 'Selesaikan'
             }
         }
 

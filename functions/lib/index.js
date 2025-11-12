@@ -1,3 +1,4 @@
+
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendDailySalesSummary = exports.onTopUpRequestUpdate = exports.onTopUpRequestCreate = exports.onPujaseraTransactionCreate = exports.processWhatsappQueue = void 0;
@@ -76,7 +77,7 @@ exports.processWhatsappQueue = (0, firestore_1.onDocumentCreated)("whatsappQueue
  * This function handles the distribution of orders to individual tenants.
  */
 exports.onPujaseraTransactionCreate = (0, firestore_1.onDocumentCreated)("stores/{pujaseraId}/transactions/{transactionId}", async (event) => {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d;
     const transactionSnapshot = event.data;
     if (!transactionSnapshot) {
         logger.info("No data for onPujaseraTransactionCreate event, exiting.");
@@ -107,17 +108,15 @@ exports.onPujaseraTransactionCreate = (0, firestore_1.onDocumentCreated)("stores
         const tenantDataMap = new Map(tenantDocs.map(doc => [doc.id, doc.data()]));
         // Create a sub-transaction for each tenant
         for (const tenantId in itemsByTenant) {
-            const tenantItems = itemsByTenant[tenantId];
             const tenantData = tenantDataMap.get(tenantId);
             if (!tenantData) {
                 logger.warn(`Tenant data for ID ${tenantId} not found, skipping distribution for these items.`);
                 continue;
             }
-            const tenantCounter = tenantData.transactionCounter || 0;
-            const newTenantReceiptNumber = tenantCounter + 1;
+            const tenantItems = itemsByTenant[tenantId];
             const tenantSubtotal = tenantItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
             const tenantTransactionData = {
-                receiptNumber: newTenantReceiptNumber,
+                receiptNumber: transactionData.receiptNumber, // Use the SAME receipt number
                 storeId: tenantId,
                 customerId: transactionData.customerId,
                 customerName: transactionData.customerName,
@@ -125,24 +124,23 @@ exports.onPujaseraTransactionCreate = (0, firestore_1.onDocumentCreated)("stores
                 createdAt: transactionData.createdAt,
                 items: tenantItems,
                 subtotal: tenantSubtotal,
-                taxAmount: 0,
-                serviceFeeAmount: 0,
-                discountAmount: 0,
-                totalAmount: tenantSubtotal,
+                taxAmount: 0, // Tax is handled at the central level
+                serviceFeeAmount: 0, // Service fee is handled at the central level
+                discountAmount: 0, // Discount is handled at the central level
+                totalAmount: tenantSubtotal, // Total for this tenant's items only
                 paymentMethod: 'Lunas (Pusat)',
                 status: 'Diproses', // This will appear in the tenant's kitchen view
-                pointsEarned: 0,
-                pointsRedeemed: 0,
+                pointsEarned: 0, // Points are handled at the central level
+                pointsRedeemed: 0, // Points are handled at the central level
                 notes: `Bagian dari pesanan pujasera #${String(transactionData.receiptNumber).padStart(6, '0')}`
             };
             const newTenantTransactionRef = db.collection('stores').doc(tenantId).collection('transactions').doc();
             batch.set(newTenantTransactionRef, tenantTransactionData);
-            batch.update(db.doc(`stores/${tenantId}`), { transactionCounter: firestore_2.FieldValue.increment(1) });
         }
         // Update customer points if applicable
         if (transactionData.customerId !== 'N/A' && (transactionData.pointsEarned > 0 || transactionData.pointsRedeemed > 0)) {
             const customerRef = db.collection('stores').doc(pujaseraId).collection('customers').doc(transactionData.customerId);
-            const pointsChange = transactionData.pointsEarned - transactionData.pointsRedeemed;
+            const pointsChange = (transactionData.pointsEarned || 0) - (transactionData.pointsRedeemed || 0);
             batch.update(customerRef, { loyaltyPoints: firestore_2.FieldValue.increment(pointsChange) });
         }
         // Update pujasera transaction counter and token balance
@@ -156,19 +154,18 @@ exports.onPujaseraTransactionCreate = (0, firestore_1.onDocumentCreated)("stores
         const feeCappedAtMin = Math.max(feeFromPercentage, minFeeRp);
         const feeCappedAtMax = Math.min(feeCappedAtMin, maxFeeRp);
         const transactionFee = feeCappedAtMax / tokenValueRp;
+        // The main transaction counter is already incremented when the main transaction is created.
+        // This function should ONLY deduct tokens.
         batch.update(db.doc(`stores/${pujaseraId}`), {
-            transactionCounter: firestore_2.FieldValue.increment(1),
             pradanaTokenBalance: firestore_2.FieldValue.increment(-transactionFee)
         });
-        // Finally, clear the virtual table
+        // Finally, clear the virtual table if it was a catalog order.
+        // For physical tables, wait for the 'complete' action in the kitchen view.
         if (transactionData.tableId) {
             const tableRef = db.doc(`stores/${pujaseraId}/tables/${transactionData.tableId}`);
             const tableDoc = await tableRef.get();
-            if (tableDoc.exists && ((_e = tableDoc.data()) === null || _e === void 0 ? void 0 : _e.isVirtual)) {
+            if (tableDoc.exists && tableDoc.data()?.isVirtual) {
                 batch.delete(tableRef);
-            }
-            else if (tableDoc.exists) {
-                batch.update(tableRef, { status: 'Menunggu Dibersihkan', currentOrder: null });
             }
         }
         await batch.commit();
