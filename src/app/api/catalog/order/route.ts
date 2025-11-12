@@ -16,13 +16,14 @@ export async function POST(req: NextRequest) {
 
         const pujaseraStoreRef = db.collection('stores').doc(pujaseraId);
         
-        // --- START: New Logic to Create Transaction Directly ---
+        // --- START: New Hybrid Logic ---
         const result = await db.runTransaction(async (transaction) => {
             const pujaseraStoreDoc = await transaction.get(pujaseraStoreRef);
             if (!pujaseraStoreDoc.exists) {
                 throw new Error("Pujasera tidak ditemukan.");
             }
             
+            // 1. Create the main transaction record immediately
             const pujaseraCounter = pujaseraStoreDoc.data()?.transactionCounter || 0;
             const newReceiptNumber = pujaseraCounter + 1;
             
@@ -36,9 +37,9 @@ export async function POST(req: NextRequest) {
                 items: cart.map(item => ({...item, storeId: item.storeId || ''})),
                 subtotal, taxAmount, serviceFeeAmount, discountAmount: 0,
                 totalAmount,
-                paymentMethod: paymentMethod === 'qris' ? 'QRIS' : 'Belum Dibayar', // If QRIS, assume paid. Otherwise, pay at cashier.
-                status: 'Diproses', // Directly set to 'Diproses' to trigger kitchen
-                pointsEarned: 0, // Points are calculated by cashier later if needed
+                paymentMethod: paymentMethod === 'qris' ? 'QRIS' : 'Belum Dibayar',
+                status: 'Diproses', // Directly set to 'Diproses' to trigger kitchen function
+                pointsEarned: 0, 
                 pointsRedeemed: 0,
                 pujaseraGroupSlug: pujaseraStoreDoc.data()?.pujaseraGroupSlug,
                 notes: 'Pesanan dari Katalog Publik'
@@ -49,6 +50,33 @@ export async function POST(req: NextRequest) {
             
             // Increment the transaction counter
             transaction.update(pujaseraStoreRef, { transactionCounter: FieldValue.increment(1) });
+
+            // 2. If payment is at the cashier, create a virtual table as a marker
+            if (paymentMethod === 'kasir') {
+                const virtualTableCounter = pujaseraStoreDoc.data()?.virtualTableCounter || 0;
+                const virtualTableName = `WEB-${virtualTableCounter + 1}`;
+                
+                const newTableRef = db.collection('stores').doc(pujaseraId).collection('tables').doc();
+                const tableOrder: TableOrder = {
+                    items: cart,
+                    totalAmount: totalAmount,
+                    orderTime: new Date().toISOString(),
+                    customer: { id: customer.id, name: customer.name, phone: customer.phone, avatarUrl: customer.avatarUrl },
+                    transactionId: newTxRef.id, // Link to the created transaction
+                    paymentMethod: 'kasir',
+                };
+                
+                const newTableData: Partial<Table> = {
+                    name: virtualTableName,
+                    status: 'Terisi', // Occupied because it's an active order
+                    capacity: 1,
+                    isVirtual: true,
+                    currentOrder: tableOrder
+                };
+
+                transaction.set(newTableRef, newTableData);
+                transaction.update(pujaseraStoreRef, { virtualTableCounter: FieldValue.increment(1) });
+            }
             
             return {
                 success: true,
@@ -56,16 +84,20 @@ export async function POST(req: NextRequest) {
                 receiptNumber: newReceiptNumber
             };
         });
-        // --- END: New Logic ---
+        // --- END: New Hybrid Logic ---
+
+        const message = paymentMethod === 'qris'
+            ? `Pesanan #${result.receiptNumber} berhasil dibuat. Silakan selesaikan pembayaran dan pesanan akan segera diproses.`
+            : `Pesanan #${result.receiptNumber} berhasil dibuat dan akan diproses. Silakan bayar di kasir.`;
 
         return NextResponse.json({ 
             success: true, 
-            message: `Pesanan #${result.receiptNumber} berhasil dibuat dan sedang diproses oleh dapur.`,
+            message: message,
             transactionId: result.transactionId
         });
 
     } catch (error) {
-        console.error('Error creating catalog order transaction:', error);
+        console.error('Error creating catalog order:', error);
         return NextResponse.json({ error: (error as Error).message }, { status: 500 });
     }
 }
