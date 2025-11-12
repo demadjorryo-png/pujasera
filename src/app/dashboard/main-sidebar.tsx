@@ -117,8 +117,7 @@ export function MainSidebar({ pradanaTokenBalance }: MainSidebarProps) {
         roles: ['admin', 'cashier', 'kitchen'],
         items: [
             { view: 'overview', label: 'Overview', icon: <LayoutGrid />, roles: ['admin', 'cashier'], tourId: 'sidebar-overview' },
-            // Menonaktifkan Kasir POS untuk tenant
-            // { view: 'pos', label: 'Kasir POS', icon: <Armchair />, roles: ['admin', 'cashier'], tourId: 'sidebar-pos', check: () => activeStore?.posMode === 'sendiri' },
+            { view: 'pos', label: 'Kasir POS', icon: <Armchair />, roles: [], tourId: 'sidebar-pos', check: () => activeStore?.posMode === 'sendiri' },
             { view: 'kitchen', label: 'Dapur', icon: <ChefHat />, roles: ['admin', 'kitchen'], tourId: 'sidebar-kitchen' },
             { view: 'transactions', label: 'Transaksi', icon: <History />, roles: ['admin', 'cashier'], tourId: 'sidebar-transactions' },
         ]
@@ -137,7 +136,6 @@ export function MainSidebar({ pradanaTokenBalance }: MainSidebarProps) {
         icon: <TrendingUp />,
         roles: ['admin'],
         items: [
-            { view: 'customer-analytics', label: 'Analisis Pelanggan', icon: <BarChart4 />, roles: ['admin'], tourId: 'sidebar-customer-analytics' },
             { view: 'ai-business-plan', label: 'AI Business Plan', icon: <Map />, roles: ['admin'], tourId: 'sidebar-ai-business-plan' },
         ]
     },
