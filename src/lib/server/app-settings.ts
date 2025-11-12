@@ -9,7 +9,7 @@ export const defaultFeeSettings: TransactionFeeSettings = {
   minFeeRp: 500,         // Biaya minimum Rp 500
   maxFeeRp: 2500,        // Biaya maksimum Rp 2500
   aiUsageFee: 1,       // Biaya 1 token per penggunaan AI tunggal
-  newStoreBonusTokens: 100, // Bonus 100 token untuk pujasera baru
+  newPujaseraBonusTokens: 100, // Bonus 100 token untuk pujasera baru
   newTenantBonusTokens: 25, // Bonus 25 token untuk tenant baru
   aiBusinessPlanFee: 25, // Biaya 25 token untuk AI Business Plan
   aiSessionFee: 5,        // Biaya 5 token untuk sesi chat AI

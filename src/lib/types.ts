@@ -232,7 +232,7 @@ export type TransactionFeeSettings = {
   minFeeRp: number;
   maxFeeRp: number;
   aiUsageFee: number;
-  newStoreBonusTokens: number;
+  newPujaseraBonusTokens: number;
   newTenantBonusTokens: number;
   aiBusinessPlanFee: number;
   aiSessionFee: number;
