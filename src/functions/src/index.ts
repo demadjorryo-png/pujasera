@@ -1,9 +1,8 @@
 
-
 import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as logger from "firebase-functions/logger";
-import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { initializeApp } from "firebase-admin/app";
 import { subDays } from "date-fns";
 import { format } from "date-fns/format";
@@ -93,6 +92,128 @@ export const processWhatsappQueue = onDocumentCreated("whatsappQueue/{messageId}
 });
 
 /**
+ * Triggers when a new Pujasera transaction is created.
+ * This function handles the distribution of orders to individual tenants.
+ */
+export const onPujaseraTransactionCreate = onDocumentCreated("stores/{pujaseraId}/transactions/{transactionId}", async (event) => {
+    const transactionSnapshot = event.data;
+    if (!transactionSnapshot) {
+        logger.info("No data for onPujaseraTransactionCreate event, exiting.");
+        return;
+    }
+
+    const transactionData = transactionSnapshot.data();
+    const pujaseraId = event.params.pujaseraId;
+
+    // Only proceed if this transaction is for a pujasera group and is marked 'Diproses'
+    if (!transactionData.pujaseraGroupSlug || transactionData.status !== 'Diproses') {
+        return;
+    }
+
+    logger.info(`Processing pujasera transaction ${transactionSnapshot.id} for distribution.`);
+
+    const batch = db.batch();
+
+    try {
+        // Group items by their original tenant storeId
+        const itemsByTenant: { [key: string]: any[] } = {};
+        for (const item of transactionData.items) {
+            if (!item.storeId) continue;
+            if (!itemsByTenant[item.storeId]) {
+                itemsByTenant[item.storeId] = [];
+            }
+            itemsByTenant[item.storeId].push(item);
+        }
+
+        // Fetch all tenants' data in parallel to get their current transaction counters
+        const tenantRefs = Object.keys(itemsByTenant).map(tenantId => db.doc(`stores/${tenantId}`));
+        const tenantDocs = await db.getAll(...tenantRefs);
+        const tenantDataMap = new Map(tenantDocs.map(doc => [doc.id, doc.data()]));
+
+        // Create a sub-transaction for each tenant
+        for (const tenantId in itemsByTenant) {
+            const tenantItems = itemsByTenant[tenantId];
+            const tenantData = tenantDataMap.get(tenantId);
+            if (!tenantData) {
+                logger.warn(`Tenant data for ID ${tenantId} not found, skipping distribution for these items.`);
+                continue;
+            }
+
+            const tenantCounter = tenantData.transactionCounter || 0;
+            const newTenantReceiptNumber = tenantCounter + 1;
+            const tenantSubtotal = tenantItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+
+            const tenantTransactionData = {
+                receiptNumber: newTenantReceiptNumber,
+                storeId: tenantId,
+                customerId: transactionData.customerId,
+                customerName: transactionData.customerName,
+                staffId: transactionData.staffId, // The pujasera cashier who processed
+                createdAt: transactionData.createdAt,
+                items: tenantItems,
+                subtotal: tenantSubtotal,
+                taxAmount: 0,
+                serviceFeeAmount: 0,
+                discountAmount: 0,
+                totalAmount: tenantSubtotal,
+                paymentMethod: 'Lunas (Pusat)',
+                status: 'Diproses', // This will appear in the tenant's kitchen view
+                pointsEarned: 0,
+                pointsRedeemed: 0,
+                notes: `Bagian dari pesanan pujasera #${String(transactionData.receiptNumber).padStart(6, '0')}`
+            };
+
+            const newTenantTransactionRef = db.collection('stores').doc(tenantId).collection('transactions').doc();
+            batch.set(newTenantTransactionRef, tenantTransactionData);
+            batch.update(db.doc(`stores/${tenantId}`), { transactionCounter: FieldValue.increment(1) });
+        }
+        
+        // Update customer points if applicable
+        if (transactionData.customerId !== 'N/A' && (transactionData.pointsEarned > 0 || transactionData.pointsRedeemed > 0)) {
+            const customerRef = db.collection('stores').doc(pujaseraId).collection('customers').doc(transactionData.customerId);
+            const pointsChange = transactionData.pointsEarned - transactionData.pointsRedeemed;
+            batch.update(customerRef, { loyaltyPoints: FieldValue.increment(pointsChange) });
+        }
+        
+        // Update pujasera transaction counter and token balance
+        const settingsDoc = await db.doc('appSettings/transactionFees').get();
+        const feeSettings = settingsDoc.data() || {};
+        const feePercentage = feeSettings.feePercentage ?? 0.005;
+        const minFeeRp = feeSettings.minFeeRp ?? 500;
+        const maxFeeRp = feeSettings.maxFeeRp ?? 2500;
+        const tokenValueRp = feeSettings.tokenValueRp ?? 1000;
+        
+        const feeFromPercentage = transactionData.totalAmount * feePercentage;
+        const feeCappedAtMin = Math.max(feeFromPercentage, minFeeRp);
+        const feeCappedAtMax = Math.min(feeCappedAtMin, maxFeeRp);
+        const transactionFee = feeCappedAtMax / tokenValueRp;
+        
+        batch.update(db.doc(`stores/${pujaseraId}`), { 
+            transactionCounter: FieldValue.increment(1),
+            pradanaTokenBalance: FieldValue.increment(-transactionFee)
+        });
+
+        // Finally, clear the virtual table
+        if (transactionData.tableId) {
+            const tableRef = db.doc(`stores/${pujaseraId}/tables/${transactionData.tableId}`);
+            const tableDoc = await tableRef.get();
+            if (tableDoc.exists && tableDoc.data()?.isVirtual) {
+                batch.delete(tableRef);
+            } else if (tableDoc.exists) {
+                batch.update(tableRef, { status: 'Menunggu Dibersihkan', currentOrder: null });
+            }
+        }
+
+        await batch.commit();
+        logger.info(`Successfully distributed transaction ${transactionSnapshot.id} to ${Object.keys(itemsByTenant).length} tenants.`);
+
+    } catch (error) {
+        logger.error(`Error processing pujasera transaction ${transactionSnapshot.id}:`, error);
+        // Optionally, update the transaction status to 'failed_distribution'
+    }
+});
+
+/**
  * Triggers when a new top-up request is created.
  * It syncs the request to the store's subcollection and sends a notification to the admin group.
  */
@@ -104,7 +225,7 @@ export const onTopUpRequestCreate = onDocumentCreated("topUpRequests/{requestId}
     }
 
     const requestData = snapshot.data();
-    const { storeId, storeName, tokensToAdd, proofUrl, userName, pujaseraGroupSlug } = requestData;
+    const { storeId, storeName, tokensToAdd, proofUrl, userName } = requestData;
 
     if (!storeId || !storeName) {
         logger.error("Top-up request is missing 'storeId' or 'storeName'.", { id: snapshot.id });
@@ -157,7 +278,7 @@ export const onTopUpRequestUpdate = onDocumentUpdated("topUpRequests/{requestId}
     return;
   }
   
-  const { storeId, storeName, status, tokensToAdd, userId, pujaseraGroupSlug } = after;
+  const { storeId, storeName, status, tokensToAdd, userId } = after;
   const requestId = event.params.requestId;
 
   if (!storeId || !storeName) {
@@ -187,10 +308,10 @@ export const onTopUpRequestUpdate = onDocumentUpdated("topUpRequests/{requestId}
   let customerMessage = '';
   let adminMessage = '';
 
-  if (status === 'disetujui') {
+  if (status === 'completed') {
       customerMessage = `✅ *Top-up Disetujui!*\n\nHalo ${customerName},\nPermintaan top-up Anda untuk toko *${storeName}* telah disetujui.\n\nSejumlah *${formattedAmount} token* telah ditambahkan ke saldo Anda.\n\nTerima kasih!`;
       adminMessage = `✅ *Top-up Disetujui*\n\nPermintaan dari: *${storeName}*\nJumlah: *${formattedAmount} token*\n\nStatus berhasil diperbarui dan saldo toko telah ditambahkan.`;
-  } else if (status === 'ditolak') {
+  } else if (status === 'rejected') {
       customerMessage = `❌ *Top-up Ditolak*\n\nHalo ${customerName},\nMohon maaf, permintaan top-up Anda untuk toko *${storeName}* sejumlah ${formattedAmount} token telah ditolak.\n\nSilakan periksa bukti transfer Anda dan coba lagi, atau hubungi admin jika ada pertanyaan.`;
       adminMessage = `❌ *Top-up Ditolak*\n\nPermintaan dari: *${storeName}*\nJumlah: *${formattedAmount} token*\n\nStatus berhasil diperbarui. Tidak ada perubahan pada saldo toko.`;
   } else {
@@ -256,13 +377,13 @@ export const sendDailySalesSummary = onSchedule({
             // Calculate date range for yesterday
             const today = new Date();
             const yesterday = subDays(today, 1);
-            const startOfDay = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 0, 0, 0);
-            const endOfDay = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 23, 5, 59);
+            const startOfDayTs = Timestamp.fromDate(new Date(yesterday.setHours(0, 0, 0, 0)));
+            const endOfDayTs = Timestamp.fromDate(new Date(yesterday.setHours(23, 59, 59, 999)));
 
             const transactionsSnapshot = await db.collectionGroup('transactions')
                 .where('storeId', '==', storeId)
-                .where('createdAt', '>=', startOfDay)
-                .where('createdAt', '<=', endOfDay)
+                .where('createdAt', '>=', startOfDayTs.toDate().toISOString())
+                .where('createdAt', '<=', endOfDayTs.toDate().toISOString())
                 .get();
 
             let totalRevenue = 0;

@@ -65,7 +65,7 @@ import { cn } from '@/lib/utils';
 import { Label } from '@/components/ui/label';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { db, auth } from '@/lib/firebase';
-import { collection, doc, runTransaction, increment, serverTimestamp, getDoc, deleteDoc, getDocs, query, where, writeBatch } from 'firebase/firestore';
+import { collection, doc, runTransaction, increment, serverTimestamp, getDoc, deleteDoc, getDocs, query, where, addDoc } from 'firebase/firestore';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth } from '@/contexts/auth-context';
 import { useDashboard } from '@/contexts/dashboard-context';
@@ -421,53 +421,16 @@ export default function POS({ onPrintRequest }: POSProps) {
     // For pujasera context, the transaction is associated with the pujasera's store ID
     const transactionStoreId = activeStore.id;
     const finalPaymentMethod = isPaid ? paymentMethod : 'Belum Dibayar';
-    const finalStatus = isPujaseraContext ? 'Selesai Dibayar' : (isPaid ? 'Selesai Dibayar' : 'Belum Dibayar');
+    const finalStatus = isPujaseraContext ? 'Diproses' : (isPaid ? 'Selesai Dibayar' : 'Belum Dibayar');
 
     try {
-      let finalTransactionData: Transaction | null = null;
-      
-      const currentTable = tables.find(t => t.id === tableId);
-      const isVirtualTable = currentTable?.isVirtual ?? false;
-
-      // Group cart items by their original tenant storeId for distribution
-      const itemsByTenant = cart.reduce((acc, item) => {
-          if (!item.storeId) return acc;
-          if (!acc[item.storeId]) {
-              const tenant = pujaseraTenants.find(t => t.id === item.storeId);
-              acc[item.storeId] = {
-                  tenantStoreRef: doc(db, 'stores', item.storeId),
-                  tenantStoreData: tenant,
-                  items: [],
-                  subtotal: 0
-              };
-          }
-          acc[item.storeId].items.push(item);
-          acc[item.storeId].subtotal += item.price * item.quantity;
-          return acc;
-      }, {} as Record<string, { tenantStoreRef: any, tenantStoreData: Store | undefined, items: CartItem[], subtotal: number }>);
-        
-
-      await runTransaction(db, async (transaction) => {
-        const batch = writeBatch(db);
-        const pujaseraStoreRef = doc(db, 'stores', transactionStoreId);
-        const pujaseraStoreDoc = await transaction.get(pujaseraStoreRef);
+        const pujaseraStoreDoc = await getDoc(doc(db, 'stores', transactionStoreId));
         if (!pujaseraStoreDoc.exists()) throw new Error("Toko pujasera tidak ditemukan.");
         
-        const customerRef = selectedCustomer ? doc(db, 'stores', activeStore.id, 'customers', selectedCustomer.id) : null;
-        if(customerRef) {
-          const customerDoc = await transaction.get(customerRef);
-          if (selectedCustomer && !customerDoc?.exists()) {
-             // To be safe, we don't throw an error but just log it. The transaction can proceed without customer points update.
-             console.warn(`Customer with ID ${selectedCustomer.id} not found. Points will not be updated.`);
-          }
-        }
-        
-        // --- Main Pujasera Transaction ---
         const pujaseraCounter = pujaseraStoreDoc.data().transactionCounter || 0;
         const pujaseraReceiptNumber = pujaseraCounter + 1;
         
-        const newMainTransactionRef = doc(collection(db, 'stores', transactionStoreId, 'transactions'));
-        const mainTransactionData: Omit<Transaction, 'id'> = {
+        const newMainTransactionData: Omit<Transaction, 'id'> = {
             receiptNumber: pujaseraReceiptNumber,
             storeId: transactionStoreId,
             customerId: selectedCustomer?.id || 'N/A',
@@ -477,72 +440,33 @@ export default function POS({ onPrintRequest }: POSProps) {
             items: cart, // The full cart
             subtotal, taxAmount, serviceFeeAmount, discountAmount, totalAmount,
             paymentMethod: finalPaymentMethod,
-            status: finalStatus, // Always 'Selesai Dibayar' for the main receipt
+            status: finalStatus,
             pointsEarned, 
-            pointsRedeemed: 0, // pointsRedeemed is not implemented in UI yet
+            pointsRedeemed: 0,
             tableId: tableId || undefined,
+            pujaseraGroupSlug: activeStore.pujaseraGroupSlug
         };
-        batch.set(newMainTransactionRef, mainTransactionData);
-        batch.update(pujaseraStoreRef, { transactionCounter: increment(1) });
-        finalTransactionData = { id: newMainTransactionRef.id, ...mainTransactionData };
 
-        // --- Distribute Orders to Tenants ---
-        for (const tenantId in itemsByTenant) {
-            const { tenantStoreRef, tenantStoreData, items, subtotal: tenantSubtotal } = itemsByTenant[tenantId];
-            if (!tenantStoreData) {
-                console.warn(`Tenant data for ID ${tenantId} not found, skipping distribution.`);
-                continue;
-            }
-            const tenantCounter = tenantStoreData.transactionCounter || 0;
-            
-            const newTenantTransactionRef = doc(collection(db, 'stores', tenantId, 'transactions'));
-            const tenantTransactionData: Omit<Transaction, 'id'> = {
-                receiptNumber: tenantCounter + 1,
-                storeId: tenantId,
-                customerId: selectedCustomer?.id || 'N/A',
-                customerName: selectedCustomer?.name || 'Guest',
-                staffId: 'CATALOG_SYSTEM',
-                createdAt: new Date().toISOString(),
-                items: items,
-                subtotal: tenantSubtotal,
-                taxAmount: 0, serviceFeeAmount: 0, discountAmount: 0,
-                totalAmount: tenantSubtotal,
-                paymentMethod: 'Lunas (Pusat)',
-                status: 'Diproses', // This triggers the kitchen view
-                pointsEarned: 0, 
-                pointsRedeemed: 0,
-            };
-            batch.set(newTenantTransactionRef, tenantTransactionData);
-            batch.update(tenantStoreRef, { transactionCounter: increment(1) });
-        }
-
-        // --- Handle Table State ---
-        if (tableId) {
-            const tableRef = doc(db, 'stores', transactionStoreId, 'tables', tableId);
-            if (isVirtualTable) {
-                batch.delete(tableRef);
-            } else {
-                batch.update(tableRef, { status: 'Menunggu Dibersihkan', currentOrder: null });
-            }
-        }
+        const newTxRef = await addDoc(collection(db, 'stores', transactionStoreId, 'transactions'), newMainTransactionData);
         
-        await batch.commit();
-      });
+        const finalTransactionData: Transaction = { id: newTxRef.id, ...newMainTransactionData };
 
-      toast({ title: "Transaksi Berhasil!", description: "Pesanan telah didistribusikan ke dapur tenant." });
+        // The Cloud Function `onPujaseraTransactionCreate` will now handle the rest.
 
-      if (finalTransactionData && isPaid) {
-        onPrintRequest(finalTransactionData);
-      }
+        toast({ title: "Transaksi Berhasil!", description: "Pesanan telah dikirim untuk diproses oleh sistem." });
 
-      refreshPradanaTokenBalance();
-      setCart([]);
-      setDiscountValue(0);
-      setPointsToRedeem(0);
-      setSelectedCustomer(undefined);
-      refreshData();
-      
-      router.push('/dashboard?view=transactions');
+        if (isPaid) {
+            onPrintRequest(finalTransactionData);
+        }
+
+        refreshPradanaTokenBalance();
+        setCart([]);
+        setDiscountValue(0);
+        setPointsToRedeem(0);
+        setSelectedCustomer(undefined);
+        refreshData();
+        
+        router.push('/dashboard?view=transactions');
 
     } catch (error) {
       console.error("Checkout failed:", error);
