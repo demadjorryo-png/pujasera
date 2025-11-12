@@ -114,13 +114,14 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                 // We need to find the correct sub-transaction document.
                 const subTransactionQuery = await getDocs(query(collection(db, 'stores', slice.tenantStoreId, 'transactions'), where('receiptNumber', '==', slice.parentTransaction.receiptNumber)));
                 
-                if (subTransactionQuery.empty) {
-                    // Fallback to update the main transaction if sub-transaction is not found (for non-pujasera flow)
-                    const mainTransactionRef = doc(db, 'stores', slice.tenantStoreId, 'transactions', slice.parentTransaction.id);
-                    await updateDoc(mainTransactionRef, { status: 'Siap Diambil' });
-                } else {
+                if (!subTransactionQuery.empty) {
+                    // This is a pujasera flow, update the specific sub-transaction for the tenant
                     const subTransactionRef = subTransactionQuery.docs[0].ref;
                     await updateDoc(subTransactionRef, { status: 'Siap Diambil' });
+                } else {
+                    // This is a regular (non-pujasera) flow, or a fallback. Update the main transaction.
+                    const mainTransactionRef = doc(db, 'stores', slice.tenantStoreId, 'transactions', slice.parentTransaction.id);
+                    await updateDoc(mainTransactionRef, { status: 'Siap Diambil' });
                 }
 
                 successMessage = `Pesanan dari ${slice.tenantStoreName} (Nota #${String(slice.parentTransaction.receiptNumber).padStart(6, '0')}) telah ditandai siap.`;
