@@ -31,6 +31,7 @@ import {
   HandCoins,
   MessageSquare,
   Store as StoreIcon,
+  Share2,
 } from 'lucide-react';
 import Image from 'next/image';
 import { Separator } from '@/components/ui/separator';
@@ -64,7 +65,7 @@ import { cn } from '@/lib/utils';
 import { Label } from '@/components/ui/label';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { db, auth } from '@/lib/firebase';
-import { collection, doc, runTransaction, increment, serverTimestamp, getDoc, deleteDoc, getDocs, query, where } from 'firebase/firestore';
+import { collection, doc, runTransaction, increment, serverTimestamp, getDoc, deleteDoc, getDocs, query, where, writeBatch } from 'firebase/firestore';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth } from '@/contexts/auth-context';
 import { useDashboard } from '@/contexts/dashboard-context';
@@ -202,6 +203,7 @@ export default function POS({ onPrintRequest }: POSProps) {
                     productName: product?.name || orderItem.productName || 'Unknown Product',
                     price: product?.price || orderItem.price || 0,
                     notes: orderItem.notes || '',
+                    storeId: product?.storeId || orderItem.storeId
                 };
             });
             setCart(reconstructedCart);
@@ -401,7 +403,7 @@ export default function POS({ onPrintRequest }: POSProps) {
       return;
     }
     if (!currentUser || !activeStore) {
-      toast({ variant: 'destructive', title: 'Sesi atau Meja Tidak Valid', description: 'Data staff, toko, atau meja tidak ditemukan.' });
+      toast({ variant: 'destructive', title: 'Sesi atau Toko Tidak Valid', description: 'Data staff atau toko tidak ditemukan.' });
       return;
     }
 
@@ -419,7 +421,7 @@ export default function POS({ onPrintRequest }: POSProps) {
     // For pujasera context, the transaction is associated with the pujasera's store ID
     const transactionStoreId = activeStore.id;
     const finalPaymentMethod = isPaid ? paymentMethod : 'Belum Dibayar';
-    const finalStatus = isPaid ? 'Selesai Dibayar' : 'Diproses';
+    const finalStatus = 'Selesai Dibayar';
 
     try {
       let finalTransactionData: Transaction | null = null;
@@ -427,111 +429,104 @@ export default function POS({ onPrintRequest }: POSProps) {
       const currentTable = tables.find(t => t.id === tableId);
       const isVirtualTable = currentTable?.isVirtual ?? false;
 
+      // Group cart items by their original tenant storeId for distribution
+      const itemsByTenant = cart.reduce((acc, item) => {
+          if (!item.storeId) return acc;
+          if (!acc[item.storeId]) {
+              const tenant = pujaseraTenants.find(t => t.id === item.storeId);
+              acc[item.storeId] = {
+                  tenantStoreRef: doc(db, 'stores', item.storeId),
+                  tenantStoreData: tenant,
+                  items: [],
+                  subtotal: 0
+              };
+          }
+          acc[item.storeId].items.push(item);
+          acc[item.storeId].subtotal += item.price * item.quantity;
+          return acc;
+      }, {} as Record<string, { tenantStoreRef: any, tenantStoreData: Store | undefined, items: CartItem[], subtotal: number }>);
+        
+
       await runTransaction(db, async (transaction) => {
-        const storeRef = doc(db, 'stores', transactionStoreId);
-        const storeDoc = await transaction.get(storeRef);
-        if (!storeDoc.exists()) {
-          throw new Error("Toko tidak ditemukan.");
+        const batch = writeBatch(db);
+        const pujaseraStoreRef = doc(db, 'stores', transactionStoreId);
+        const pujaseraStoreDoc = await transaction.get(pujaseraStoreRef);
+        if (!pujaseraStoreDoc.exists()) throw new Error("Toko pujasera tidak ditemukan.");
+        
+        const customerRef = selectedCustomer ? doc(db, 'customers', selectedCustomer.id) : null;
+        if(customerRef) {
+          const customerDoc = await transaction.get(customerRef);
+          if (selectedCustomer && !customerDoc?.exists()) {
+             // To be safe, we don't throw an error but just log it. The transaction can proceed without customer points update.
+             console.warn(`Customer with ID ${selectedCustomer.id} not found. Points will not be updated.`);
+          }
         }
-        const storeData = storeDoc.data();
         
-        const customerRef = selectedCustomer ? doc(db, 'pujaseraCustomers', selectedCustomer.id) : null;
-        const customerDoc = customerRef ? await transaction.get(customerRef) : null;
+        // --- Main Pujasera Transaction ---
+        const pujaseraCounter = pujaseraStoreDoc.data().transactionCounter || 0;
+        const pujaseraReceiptNumber = pujaseraCounter + 1;
         
-        // Group cart items by their original storeId for stock updates
-        const itemsByStore = cart.reduce((acc, item) => {
-            if (!item.storeId) return acc;
-            if (!acc[item.storeId]) acc[item.storeId] = [];
-            acc[item.storeId].push(item);
-            return acc;
-        }, {} as Record<string, CartItem[]>);
-        
-        // Prepare to read all products in one go
-        const productReads: { ref: any, item: CartItem }[] = [];
-        for (const storeId in itemsByStore) {
-            for (const item of itemsByStore[storeId]) {
-                 if (!item.productId.startsWith('manual-')) {
-                    productReads.push({
-                        ref: doc(db, 'stores', storeId, 'products', item.productId),
-                        item: item
-                    });
-                }
+        const newMainTransactionRef = doc(collection(db, 'stores', transactionStoreId, 'transactions'));
+        const mainTransactionData: Omit<Transaction, 'id'> = {
+            receiptNumber: pujaseraReceiptNumber,
+            storeId: transactionStoreId,
+            customerId: selectedCustomer?.id || 'N/A',
+            customerName: selectedCustomer?.name || 'Guest',
+            staffId: currentUser.id,
+            createdAt: new Date().toISOString(),
+            items: cart, // The full cart
+            subtotal, taxAmount, serviceFeeAmount, discountAmount, totalAmount,
+            paymentMethod: finalPaymentMethod,
+            status: finalStatus, // Always 'Selesai Dibayar' for the main receipt
+            pointsEarned, pointsRedeemed,
+        };
+        batch.set(newMainTransactionRef, mainTransactionData);
+        batch.update(pujaseraStoreRef, { transactionCounter: increment(1) });
+        finalTransactionData = { id: newMainTransactionRef.id, ...mainTransactionData };
+
+        // --- Distribute Orders to Tenants ---
+        for (const tenantId in itemsByTenant) {
+            const { tenantStoreRef, tenantStoreData, items, subtotal: tenantSubtotal } = itemsByTenant[tenantId];
+            if (!tenantStoreData) {
+                console.warn(`Tenant data for ID ${tenantId} not found, skipping distribution.`);
+                continue;
             }
-        }
-        
-        const productDocs = await Promise.all(productReads.map(p => transaction.get(p.ref)));
-
-        const currentCounter = storeData.transactionCounter || 0;
-        const newReceiptNumber = currentCounter + 1;
-        const isFirstTransaction = currentCounter === 0;
-
-        const updatesForPujaseraStore: { [key: string]: unknown } = {
-          transactionCounter: increment(1)
-        };
-        if (isFirstTransaction) {
-          updatesForPujaseraStore.firstTransactionDate = serverTimestamp();
-        }
-        
-        // Deduct fee from pujasera's balance
-        updatesForPujaseraStore.pradanaTokenBalance = increment(-transactionFee);
-        transaction.update(storeRef, updatesForPujaseraStore);
-        
-        // Update stock for each product in its respective tenant's subcollection
-        for (let i = 0; i < productDocs.length; i++) {
-          const productDoc = productDocs[i];
-          const { item } = productReads[i];
-          if (!productDoc.exists()) throw new Error(`Produk ${item.productName} tidak ditemukan.`);
-          const currentStock = productDoc.data().stock || 0;
-          if (currentStock < item.quantity) throw new Error(`Stok tidak cukup untuk ${item.productName}.`);
-          transaction.update(productDoc.ref, { stock: increment(-item.quantity) });
+            const tenantCounter = tenantStoreData.transactionCounter || 0;
+            
+            const newTenantTransactionRef = doc(collection(db, 'stores', tenantId, 'transactions'));
+            const tenantTransactionData: Omit<Transaction, 'id'> = {
+                receiptNumber: tenantCounter + 1,
+                storeId: tenantId,
+                customerId: selectedCustomer?.id || 'N/A',
+                customerName: selectedCustomer?.name || 'Guest',
+                staffId: 'CATALOG_SYSTEM',
+                createdAt: new Date().toISOString(),
+                items: items,
+                subtotal: tenantSubtotal,
+                taxAmount: 0, serviceFeeAmount: 0, discountAmount: 0,
+                totalAmount: tenantSubtotal,
+                paymentMethod: 'Lunas (Pusat)',
+                status: 'Diproses', // This triggers the kitchen view
+                pointsEarned: 0, pointsRedeemed: 0,
+            };
+            batch.set(newTenantTransactionRef, tenantTransactionData);
+            batch.update(tenantStoreRef, { transactionCounter: increment(1) });
         }
 
-        // Update customer points
-        if (selectedCustomer && customerDoc?.exists() && pointSettings) {
-          const earnedPoints = Math.floor(totalAmount / pointSettings.rpPerPoint);
-          const customerPoints = customerDoc.data()?.loyaltyPoints || 0;
-          const newPoints = customerPoints + earnedPoints - pointsToRedeem;
-          transaction.update(customerDoc.ref, { loyaltyPoints: newPoints });
-        }
-
-        // Create one transaction document under the pujasera's store
-        const newTransactionRef = doc(collection(db, 'stores', transactionStoreId, 'transactions'));
-        const transactionData: Transaction = {
-          id: newTransactionRef.id,
-          receiptNumber: newReceiptNumber,
-          storeId: transactionStoreId,
-          customerId: selectedCustomer?.id || 'N/A',
-          customerName: selectedCustomer?.name || 'Guest',
-          staffId: currentUser.id,
-          createdAt: new Date().toISOString(),
-          subtotal: subtotal,
-          discountAmount: discountAmount,
-          taxAmount: taxAmount,
-          serviceFeeAmount: serviceFeeAmount,
-          totalAmount: totalAmount,
-          paymentMethod: finalPaymentMethod,
-          pointsEarned: pointsEarned,
-          pointsRedeemed: pointsToRedeem,
-          items: cart, // Cart items already contain storeId
-          status: finalStatus,
-          tableId: tableId ?? undefined,
-        };
-        transaction.set(newTransactionRef, transactionData);
-        
-        // If it's a table order, handle table state change
+        // --- Handle Table State ---
         if (tableId) {
             const tableRef = doc(db, 'stores', transactionStoreId, 'tables', tableId);
-            if (isPaid && isVirtualTable) {
-                transaction.delete(tableRef);
+            if (isVirtualTable) {
+                batch.delete(tableRef);
             } else {
-                transaction.update(tableRef, { status: 'Menunggu Dibersihkan', currentOrder: null });
+                batch.update(tableRef, { status: 'Menunggu Dibersihkan', currentOrder: null });
             }
         }
-
-        finalTransactionData = transactionData;
+        
+        await batch.commit();
       });
 
-      toast({ title: "Transaksi Berhasil!", description: "Transaksi telah disimpan dan stok produk diperbarui." });
+      toast({ title: "Transaksi Berhasil!", description: "Pesanan telah didistribusikan ke dapur tenant." });
 
       if (finalTransactionData && isPaid) {
         onPrintRequest(finalTransactionData);
@@ -866,30 +861,46 @@ export default function POS({ onPrintRequest }: POSProps) {
               )}
               
               <div className="space-y-2 pt-4">
-                <Button 
-                    size="lg" 
-                    className="w-full font-headline text-lg tracking-wider" 
-                    onClick={() => setConfirmationAction({ isPaid: false })} 
-                    disabled={isProcessingCheckout || isProductLoading || cart.length === 0}
-                >
-                    <ClipboardCheck className="mr-2 h-5 w-5"/>
-                    Buat Transaksi (Bayar Nanti)
-                </Button>
+                {isPujaseraContext && (
+                    <Button 
+                        size="lg" 
+                        className="w-full font-headline text-lg tracking-wider" 
+                        onClick={() => setConfirmationAction({ isPaid: true })}
+                        disabled={isProcessingCheckout || isProductLoading || cart.length === 0}
+                    >
+                        <Share2 className="mr-2 h-5 w-5"/>
+                        Proses & Distribusikan ke Tenant
+                    </Button>
+                )}
                 
-                <div className="grid grid-cols-3 gap-2">
-                    <Button variant={paymentMethod === 'Cash' ? 'default' : 'secondary'} onClick={() => setPaymentMethod('Cash')}>Tunai</Button>
-                    <Button variant={paymentMethod === 'Card' ? 'default' : 'secondary'} onClick={() => setPaymentMethod('Card')}>Kartu</Button>
-                    <Button variant={paymentMethod === 'QRIS' ? 'default' : 'secondary'} onClick={() => setPaymentMethod('QRIS')}>QRIS</Button>
-                </div>
-                <Button 
-                    size="lg" 
-                    className="w-full font-headline text-lg tracking-wider" 
-                    onClick={() => setConfirmationAction({ isPaid: true })}
-                    disabled={isProcessingCheckout || isProductLoading || cart.length === 0}
-                >
-                    <CreditCard className="mr-2 h-5 w-5"/>
-                    Proses Pembayaran & Selesaikan
-                </Button>
+                {!isPujaseraContext && (
+                    <>
+                    <Button 
+                        size="lg" 
+                        className="w-full font-headline text-lg tracking-wider" 
+                        onClick={() => setConfirmationAction({ isPaid: false })} 
+                        disabled={isProcessingCheckout || isProductLoading || cart.length === 0}
+                    >
+                        <ClipboardCheck className="mr-2 h-5 w-5"/>
+                        Buat Transaksi (Bayar Nanti)
+                    </Button>
+                    
+                    <div className="grid grid-cols-3 gap-2">
+                        <Button variant={paymentMethod === 'Cash' ? 'default' : 'secondary'} onClick={() => setPaymentMethod('Cash')}>Tunai</Button>
+                        <Button variant={paymentMethod === 'Card' ? 'default' : 'secondary'} onClick={() => setPaymentMethod('Card')}>Kartu</Button>
+                        <Button variant={paymentMethod === 'QRIS' ? 'default' : 'secondary'} onClick={() => setPaymentMethod('QRIS')}>QRIS</Button>
+                    </div>
+                    <Button 
+                        size="lg" 
+                        className="w-full font-headline text-lg tracking-wider" 
+                        onClick={() => setConfirmationAction({ isPaid: true })}
+                        disabled={isProcessingCheckout || isProductLoading || cart.length === 0}
+                    >
+                        <CreditCard className="mr-2 h-5 w-5"/>
+                        Proses Pembayaran & Selesaikan
+                    </Button>
+                    </>
+                )}
               </div>
 
             </CardContent>
@@ -915,9 +926,10 @@ export default function POS({ onPrintRequest }: POSProps) {
                 <AlertDialogTitle>Konfirmasi Transaksi</AlertDialogTitle>
                 <AlertDialogDescription>
                     {confirmationAction?.isPaid 
-                        ? `Anda akan menyelesaikan transaksi dengan total Rp ${totalAmount.toLocaleString('id-ID')} menggunakan metode pembayaran ${paymentMethod}.`
+                        ? `Anda akan menyelesaikan transaksi dengan total Rp ${totalAmount.toLocaleString('id-ID')}.`
                         : `Anda akan membuat transaksi 'Bayar Nanti' dengan total Rp ${totalAmount.toLocaleString('id-ID')}.`
                     }
+                    {isPujaseraContext && confirmationAction?.isPaid && " Pesanan akan didistribusikan ke dapur tenant terkait."}
                     <br/><br/>
                     Pastikan detail pesanan sudah benar. Lanjutkan?
                 </AlertDialogDescription>
