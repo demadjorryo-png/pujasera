@@ -10,9 +10,6 @@ type MiniStickerProps = {
 };
 
 export function MiniSticker({ transaction }: MiniStickerProps) {
-  // Use the generated text from the transaction, or a default message if it doesn't exist.
-  const followUpMessage = transaction.generatedFollowUpText || "Follow Up Cerdas";
-
   return (
     <div className="bg-white text-black font-sans w-[302px] p-2 border border-dashed border-black">
       <div className="text-center mb-1">
@@ -31,9 +28,6 @@ export function MiniSticker({ transaction }: MiniStickerProps) {
         ))}
       </div>
       <Separator className="border-dashed border-black" />
-      <div className="text-center mt-1">
-        <p className="text-xs font-semibold">{followUpMessage}</p>
-      </div>
     </div>
   );
 }
