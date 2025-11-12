@@ -1,0 +1,11 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Semua file di bucket
+    match /{allPaths=**} {
+      // Izinkan semua operasi baca (read) jika pengguna sudah login.
+      allow read, write: if true;
+    }
+  }
+}

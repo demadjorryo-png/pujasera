@@ -1,0 +1,46 @@
+{
+  "placeholderImages": [
+    {
+      "id": "liquid-1",
+      "description": "Bottle of strawberry flavored vape liquid",
+      "imageUrl": "https://picsum.photos/seed/vape1/400/400",
+      "imageHint": "vape liquid"
+    },
+    {
+      "id": "liquid-2",
+      "description": "Bottle of mango flavored vape liquid",
+      "imageUrl": "https://picsum.photos/seed/vape4/400/400",
+      "imageHint": "vape liquid"
+    },
+    {
+      "id": "liquid-3",
+      "description": "Bottle of coffee flavored vape liquid",
+      "imageUrl": "https://picsum.photos/seed/vape5/400/400",
+      "imageHint": "vape liquid"
+    },
+    {
+      "id": "device-1",
+      "description": "Sleek black vape pod device",
+      "imageUrl": "https://picsum.photos/seed/vape2/400/400",
+      "imageHint": "vape device"
+    },
+    {
+      "id": "device-2",
+      "description": "Silver vape mod device",
+      "imageUrl": "https://picsum.photos/seed/vape6/400/400",
+      "imageHint": "vape device"
+    },
+    {
+      "id": "coil-1",
+      "description": "Close up of a vape coil",
+      "imageUrl": "https://picsum.photos/seed/vape3/400/400",
+      "imageHint": "vape coil"
+    },
+    {
+      "id": "atomizer-1",
+      "description": "Shiny metal RDA atomizer",
+      "imageUrl": "https://picsum.photos/seed/vape7/400/400",
+      "imageHint": "vape atomizer"
+    }
+  ]
+}

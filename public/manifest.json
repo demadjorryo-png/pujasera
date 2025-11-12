@@ -1,0 +1,16 @@
+{
+  "name": "Kasir POS Chika F&B",
+  "short_name": "Chika F&B",
+  "description": "Aplikasi Kasir Cerdas dengan Fitur AI",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#020817",
+  "theme_color": "#facc15",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

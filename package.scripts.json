@@ -1,0 +1,9 @@
+
+{
+    "scripts": {
+        "lint": "next lint --dir src",
+        "typecheck": "tsc --noEmit",
+        "format": "prettier --write .",
+        "prebuild": "npm run lint && npm run typecheck"
+    }
+}

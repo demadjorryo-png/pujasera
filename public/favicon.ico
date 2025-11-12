@@ -1,0 +1,24 @@
+{
+  "background_color": "#000000",
+  "description": "Fitur Unggulan Chika POS: Lebih dari Sekadar Kasir, Ini Partner Bisnis Cerdas Anda!",
+  "dir": "ltr",
+  "display": "standalone",
+  "name": "Kasir POS Chika F&B",
+  "orientation": "any",
+  "scope": "/",
+  "short_name": "Chika POS F&B",
+  "start_url": "/login",
+  "theme_color": "#fca311",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ]
+}
