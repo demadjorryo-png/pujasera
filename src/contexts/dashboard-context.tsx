@@ -1,7 +1,7 @@
 'use client';
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode, useRef } from 'react';
 import { db } from '@/lib/firebase';
-import { collection, getDocs, query, orderBy, onSnapshot, Unsubscribe, where } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, onSnapshot, Unsubscribe, where, collectionGroup } from 'firebase/firestore';
 import { useAuth } from '@/contexts/auth-context';
 import { useToast } from '@/hooks/use-toast';
 import type { User, RedemptionOption, Product, Store, Customer, Transaction, PendingOrder, Table, ChallengePeriod, TransactionFeeSettings } from '@/lib/types';
@@ -13,15 +13,16 @@ const defaultFeeSettings: TransactionFeeSettings = {
   minFeeRp: 500,
   maxFeeRp: 2500,
   aiUsageFee: 1,
-  newStoreBonusTokens: 50,
+  newPujaseraBonusTokens: 100,
+  newTenantBonusTokens: 25,
   aiBusinessPlanFee: 25,
   aiSessionFee: 5,
   aiSessionDurationMinutes: 30,
+  catalogTrialFee: 55,
+  catalogTrialDurationMonths: 1,
   catalogMonthlyFee: 250,
   catalogSixMonthFee: 1400,
   catalogYearlyFee: 2500,
-  catalogTrialFee: 55,
-  catalogTrialDurationMonths: 1,
   taxPercentage: 0,
   serviceFeePercentage: 0,
 };
@@ -68,7 +69,7 @@ async function fetchTransactionFeeSettings(): Promise<TransactionFeeSettings> {
 
 
 export function DashboardProvider({ children }: { children: ReactNode }) {
-  const { currentUser, activeStore, isLoading: isAuthLoading, refreshPradanaTokenBalance } = useAuth();
+  const { currentUser, activeStore, pujaseraTenants, isLoading: isAuthLoading, refreshPradanaTokenBalance } = useAuth();
   const { toast } = useToast();
   const notificationAudioRef = useRef<HTMLAudioElement>(null);
 
@@ -187,44 +188,79 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
     let unsubscribes: Unsubscribe[] = [];
 
-    if (currentUser.role !== 'superadmin' && activeStore?.id) {
-        const storeId = activeStore.id;
-        
-        const transactionsQuery = query(collection(db, 'stores', storeId, 'transactions'), orderBy('createdAt', 'desc'));
-        const tablesQuery = query(collection(db, 'stores', storeId, 'tables'), orderBy('name'));
-        const pendingOrdersQuery = query(collection(db, 'pendingOrders'));
+    const isPujaseraUser = currentUser.role === 'pujasera_admin' || currentUser.role === 'pujasera_cashier';
+    const storeId = activeStore?.id;
+    const groupSlug = activeStore?.pujaseraGroupSlug;
 
-        const unsubTransactions = onSnapshot(transactionsQuery, (snapshot) => {
-            setTransactions(prevTransactions => {
-              const newTransactions = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
-              
-              if (prevTransactions.length > 0) {
-                  const prevTxIds = new Set(prevTransactions.map(t => t.id));
-                  const justAdded = newTransactions.filter(t => !prevTxIds.has(t.id));
-                  
-                  if (justAdded.some(t => t.status === 'Diproses')) {
-                    playNotificationSound();
-                    toast({
-                        title: "🔔 Pesanan Baru untuk Dapur!",
-                        description: `Ada pesanan baru yang perlu disiapkan.`,
-                    });
+    if (storeId) {
+        if (isPujaseraUser && groupSlug) {
+            // For pujasera users, listen to the transactions collection group for all tenants
+            // AND the pujasera's own transactions collection.
+            const tenantTxQuery = query(
+                collectionGroup(db, 'transactions'),
+                where('pujaseraGroupSlug', '==', groupSlug)
+            );
+            const pujaseraTxQuery = query(
+                collection(db, 'stores', storeId, 'transactions'),
+                orderBy('createdAt', 'desc')
+            );
+    
+            const unsubTenantTxs = onSnapshot(tenantTxQuery, (snapshot) => {
+                const tenantTxs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
+                setTransactions(currentTxs => {
+                    // Combine with pujasera-level transactions
+                    const pujaseraTxs = currentTxs.filter(t => t.storeId === storeId);
+                    const allTxs = [...tenantTxs, ...pujaseraTxs];
+                    // Deduplicate
+                    return Array.from(new Map(allTxs.map(t => [t.id, t])).values());
+                });
+            }, (error) => console.error("Error listening to tenant transactions:", error));
+    
+            const unsubPujaseraTxs = onSnapshot(pujaseraTxQuery, (snapshot) => {
+                const pujaseraTxs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
+                setTransactions(currentTxs => {
+                    // Combine with tenant-level transactions
+                    const tenantTxs = currentTxs.filter(t => t.storeId !== storeId);
+                     const allTxs = [...tenantTxs, ...pujaseraTxs];
+                    // Deduplicate
+                    return Array.from(new Map(allTxs.map(t => [t.id, t])).values());
+                });
+            }, (error) => console.error("Error listening to pujasera transactions:", error));
+
+            unsubscribes.push(unsubTenantTxs, unsubPujaseraTxs);
+        } else {
+            // For regular tenant users, listen only to their own store's transactions
+            const transactionsQuery = query(collection(db, 'stores', storeId, 'transactions'), orderBy('createdAt', 'desc'));
+            const unsubTransactions = onSnapshot(transactionsQuery, (snapshot) => {
+                setTransactions(prevTransactions => {
+                  const newTransactions = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
+                  if (prevTransactions.length > 0) {
+                      const prevTxIds = new Set(prevTransactions.map(t => t.id));
+                      const justAdded = newTransactions.filter(t => !prevTxIds.has(t.id));
+                      if (justAdded.some(t => t.status === 'Diproses')) {
+                        playNotificationSound();
+                        toast({
+                            title: "🔔 Pesanan Baru untuk Dapur!",
+                            description: `Ada pesanan baru yang perlu disiapkan.`,
+                        });
+                      }
                   }
-              }
-              return newTransactions;
-            });
-        }, (error) => console.error("Error listening to transactions: ", error));
+                  return newTransactions;
+                });
+            }, (error) => console.error("Error listening to transactions: ", error));
+            unsubscribes.push(unsubTransactions);
+        }
 
+        // Listen to tables for all users with an active store
+        const tablesQuery = query(collection(db, 'stores', storeId, 'tables'), orderBy('name'));
         const unsubTables = onSnapshot(tablesQuery, (snapshot) => {
             const newTables = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Table));
-            
             setTables(prevTables => {
-                // Only notify if there are previous tables to compare against
                 if (prevTables.length > 0) {
                     const prevTableIds = new Set(prevTables.map(t => t.id));
                     const newVirtualOrders = newTables.filter(t => 
                         !prevTableIds.has(t.id) && t.isVirtual && t.currentOrder
                     );
-
                     if (newVirtualOrders.length > 0) {
                         playNotificationSound();
                         newVirtualOrders.forEach(table => {
@@ -238,12 +274,14 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
                 return newTables;
             });
         }, (error) => console.error("Error listening to tables: ", error));
-        
+        unsubscribes.push(unsubTables);
+
+        // Listen to pending orders (for all store types)
+        const pendingOrdersQuery = query(collection(db, 'pendingOrders'));
         const unsubPendingOrders = onSnapshot(pendingOrdersQuery, (snapshot) => {
             setPendingOrders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PendingOrder)));
         }, (error) => console.error("Error listening to pending orders: ", error));
-
-        unsubscribes = [unsubTransactions, unsubTables, unsubPendingOrders];
+        unsubscribes.push(unsubPendingOrders);
     }
 
     return () => {
