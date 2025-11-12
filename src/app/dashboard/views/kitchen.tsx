@@ -1,4 +1,3 @@
-
 'use client';
 
 import * as React from 'react';
@@ -23,46 +22,84 @@ type KitchenProps = {
     onPrintStickerRequest: (transaction: Transaction) => void;
 };
 
+// This represents a "view" of an order for a specific tenant
+type TenantOrderSlice = {
+    parentTransaction: Transaction;
+    tenantStoreId: string;
+    tenantStoreName: string;
+    items: CartItem[];
+};
+
+
 export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: KitchenProps) {
     const { dashboardData, refreshData } = useDashboard();
     const { activeStore, currentUser } = useAuth();
     const { transactions, tables } = dashboardData;
     const { toast } = useToast();
     const [processingId, setProcessingId] = React.useState<string | null>(null);
-
-    const activeOrders = React.useMemo(() => {
-        const relevantTransactions = currentUser?.role === 'pujasera_admin' || currentUser?.role === 'pujasera_cashier'
-            ? transactions
-            : transactions.filter(t => t.storeId === activeStore?.id);
-
-        return relevantTransactions
-            .filter(t => t.status === 'Diproses' || t.status === 'Siap Diambil')
-            .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-    }, [transactions, currentUser?.role, activeStore?.id]);
     
-    const handleAction = async (transaction: Transaction, action: 'complete' | 'ready') => {
+    const isPujaseraUser = currentUser?.role === 'pujasera_admin' || currentUser?.role === 'pujasera_cashier';
+
+    const tenantOrderSlices = React.useMemo(() => {
+        const activeTransactions = transactions.filter(t => t.status === 'Diproses' || t.status === 'Siap Diambil');
+
+        if (!isPujaseraUser) {
+            // For regular tenants, their transactions are their slices
+            return activeTransactions.filter(t => t.storeId === activeStore?.id).map(tx => ({
+                parentTransaction: tx,
+                tenantStoreId: tx.storeId,
+                tenantStoreName: activeStore?.name || 'Toko Anda',
+                items: tx.items,
+            }));
+        }
+        
+        // For pujasera users, we "explode" each transaction into slices per tenant
+        const slices: TenantOrderSlice[] = [];
+        activeTransactions.forEach(tx => {
+            const itemsByTenant = tx.items.reduce((acc, item) => {
+                const storeId = item.storeId || 'unknown';
+                const storeName = item.storeName || 'Tenant Tidak Diketahui';
+                if (!acc[storeId]) {
+                    acc[storeId] = { storeName, items: [] };
+                }
+                acc[storeId].items.push(item);
+                return acc;
+            }, {} as Record<string, { storeName: string; items: CartItem[] }>);
+
+            Object.entries(itemsByTenant).forEach(([tenantId, data]) => {
+                slices.push({
+                    parentTransaction: tx,
+                    tenantStoreId: tenantId,
+                    tenantStoreName: data.storeName,
+                    items: data.items,
+                });
+            });
+        });
+        
+        // Sort all slices by the original transaction time
+        return slices.sort((a, b) => new Date(a.parentTransaction.createdAt).getTime() - new Date(b.parentTransaction.createdAt).getTime());
+
+    }, [transactions, isPujaseraUser, activeStore]);
+
+
+    const handleAction = async (slice: TenantOrderSlice, action: 'complete' | 'ready') => {
         if (!activeStore) return;
-        setProcessingId(transaction.id);
-        
-        // For Pujasera users completing an order, the target is the sub-transaction inside the tenant's store doc.
-        // The `transaction` object in the kitchen view for pujasera users IS the sub-transaction.
-        const txStoreId = transaction.storeId;
-        
+        setProcessingId(slice.parentTransaction.id + slice.tenantStoreId);
+
         try {
             const batch = writeBatch(db);
             let successMessage = '';
-
-            if (action === 'complete') {
-                 const transactionRef = doc(db, 'stores', txStoreId, 'transactions', transaction.id);
+            
+            if (action === 'complete') { // This action is only for the whole pujasera transaction
+                 const transactionRef = doc(db, 'stores', activeStore.id, 'transactions', slice.parentTransaction.id);
                  const transactionDoc = await getDoc(transactionRef);
                  if (!transactionDoc.exists()) throw new Error("Transaksi tidak ditemukan.");
 
                 batch.update(transactionRef, { status: 'Selesai' });
-                successMessage = `Pesanan untuk ${transaction.customerName} telah ditandai selesai.`;
+                successMessage = `Pesanan untuk ${slice.parentTransaction.customerName} telah ditandai selesai.`;
 
-                // The pujasera is responsible for the table, so we use `activeStore.id` for the tableRef path.
-                if (transaction.tableId) {
-                    const tableRef = doc(db, 'stores', activeStore.id, 'tables', transaction.tableId);
+                if (slice.parentTransaction.tableId) {
+                    const tableRef = doc(db, 'stores', activeStore.id, 'tables', slice.parentTransaction.tableId);
                     const tableDoc = await getDoc(tableRef);
                     if (tableDoc.exists()) {
                         if (tableDoc.data()?.isVirtual) {
@@ -73,11 +110,17 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                     }
                 }
             } else if (action === 'ready') {
-                // When a tenant marks their part as ready, they are updating their own sub-transaction.
-                // activeStore.id would be the tenant's own store ID here.
-                const tenantTransactionRef = doc(db, 'stores', activeStore.id, 'transactions', transaction.id);
-                batch.update(tenantTransactionRef, { status: 'Siap Diambil' });
-                successMessage = `Pesanan Anda untuk nota #${String(transaction.receiptNumber).padStart(6, '0')} telah ditandai siap.`;
+                // When a tenant marks their part as ready, they are updating their OWN sub-transaction.
+                // We need to find the correct sub-transaction document.
+                const subTransactionQuery = await getDocs(query(collection(db, 'stores', slice.tenantStoreId, 'transactions'), where('receiptNumber', '==', slice.parentTransaction.receiptNumber)));
+                
+                if (subTransactionQuery.empty) {
+                    throw new Error(`Sub-transaksi untuk tenant ${slice.tenantStoreName} tidak ditemukan.`);
+                }
+                const subTransactionRef = subTransactionQuery.docs[0].ref;
+                batch.update(subTransactionRef, { status: 'Siap Diambil' });
+
+                successMessage = `Pesanan dari ${slice.tenantStoreName} (Nota #${String(slice.parentTransaction.receiptNumber).padStart(6, '0')}) telah ditandai siap.`;
             }
 
             await batch.commit();
@@ -99,8 +142,6 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
         }
     };
     
-    const isPujaseraUser = currentUser?.role === 'pujasera_admin' || currentUser?.role === 'pujasera_cashier';
-
     const getStatusBadge = (status: TransactionStatus) => {
         switch(status) {
             case 'Diproses':
@@ -112,77 +153,55 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
         }
     }
 
-    const groupItemsByStore = (items: CartItem[]) => {
-        return items.reduce((acc, item) => {
-            const storeName = item.storeName || 'Toko Tidak Dikenal';
-            if (!acc[storeName]) {
-                acc[storeName] = [];
-            }
-            acc[storeName].push(item);
-            return acc;
-        }, {} as Record<string, CartItem[]>);
-    };
 
     return (
         <div className="h-[calc(100vh-8rem)] flex flex-col">
             <ScrollArea className="flex-grow">
-                <div className="space-y-4 p-1">
-                    {activeOrders.length > 0 ? (
-                        activeOrders.map(order => {
-                            const itemsByStore = isPujaseraUser ? groupItemsByStore(order.items) : null;
-                            const tableName = tables.find(t => t.id === order.tableId)?.name;
+                <div className={cn("p-1", isPujaseraUser ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4" : "space-y-4")}>
+                    {tenantOrderSlices.length > 0 ? (
+                        tenantOrderSlices.map((slice, idx) => {
+                            const { parentTransaction, tenantStoreName, items } = slice;
+                            const tableName = tables.find(t => t.id === parentTransaction.tableId)?.name;
+                            const uniqueKey = `${parentTransaction.id}-${slice.tenantStoreId}-${idx}`;
+
                             return (
-                            <Card key={order.id} className="flex flex-col">
+                            <Card key={uniqueKey} className="flex flex-col">
                                 <CardHeader>
                                     <div className='flex justify-between items-start'>
                                         <div>
-                                            <CardTitle>{order.customerName}</CardTitle>
+                                            {isPujaseraUser ? (
+                                                <CardTitle className="flex items-center gap-2 text-base"><Store className="h-4 w-4"/>{tenantStoreName}</CardTitle>
+                                            ) : (
+                                                <CardTitle>{parentTransaction.customerName}</CardTitle>
+                                            )}
                                             <CardDescription>
-                                                Nota: {String(order.receiptNumber).padStart(6, '0')} 
+                                                Nota: {String(parentTransaction.receiptNumber).padStart(6, '0')}
                                                 {tableName && ` • Meja: ${tableName}`}
                                                 {' • '}
-                                                {formatDistanceToNow(new Date(order.createdAt), { addSuffix: true, locale: idLocale })}
+                                                {formatDistanceToNow(new Date(parentTransaction.createdAt), { addSuffix: true, locale: idLocale })}
                                             </CardDescription>
                                         </div>
-                                        {getStatusBadge(order.status)}
+                                        {getStatusBadge(parentTransaction.status)}
                                     </div>
+                                    {isPujaseraUser && <CardTitle className="text-lg pt-2">{parentTransaction.customerName}</CardTitle>}
                                 </CardHeader>
-                                <CardContent className="flex-grow space-y-4">
-                                     {itemsByStore ? (
-                                        Object.entries(itemsByStore).map(([storeName, items]) => (
-                                            <div key={storeName} className="space-y-2 rounded-md border p-3">
-                                                <p className="font-semibold text-sm flex items-center gap-2"><Store className="h-4 w-4 text-muted-foreground"/> {storeName}</p>
-                                                <Separator />
-                                                {items.map((item, index) => (
-                                                    <div key={index} className="flex justify-between items-start text-sm ml-2">
-                                                        <div>
-                                                            <span className="font-semibold">{item.quantity}x</span> {item.productName}
-                                                            {item.notes && (
-                                                                <p className="text-xs text-muted-foreground italic pl-4">&quot;{item.notes}&quot;</p>
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                ))}
+                                <CardContent className="flex-grow space-y-2">
+                                     {items.map((item, index) => (
+                                        <div key={index} className="flex justify-between items-start">
+                                            <div className="flex-1">
+                                                <span className="font-semibold">{item.quantity}x</span> {item.productName}
+                                                {item.notes && (
+                                                    <p className="text-xs text-muted-foreground italic pl-4">&quot;{item.notes}&quot;</p>
+                                                )}
                                             </div>
-                                        ))
-                                     ) : (
-                                        order.items.map((item, index) => (
-                                            <div key={index} className="flex justify-between items-start">
-                                                <div className="flex-1">
-                                                    <span className="font-semibold">{item.quantity}x</span> {item.productName}
-                                                    {item.notes && (
-                                                        <p className="text-xs text-muted-foreground italic pl-4">&quot;{item.notes}&quot;</p>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        ))
-                                     )}
+                                        </div>
+                                    ))}
                                 </CardContent>
-                                <CardFooter className="flex gap-2">
+                                <CardFooter className="flex flex-col gap-2">
                                      <Button 
                                         variant="outline"
                                         className="w-full" 
-                                        onClick={() => onPrintStickerRequest(order)}
+                                        onClick={() => onPrintStickerRequest(parentTransaction)}
                                     >
                                         <Printer className="mr-2 h-4 w-4" />
                                         Cetak Stiker
@@ -192,27 +211,27 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                                             <Button 
                                                 variant="outline"
                                                 className="w-full" 
-                                                onClick={() => onFollowUpRequest(order)}
+                                                onClick={() => onFollowUpRequest(parentTransaction)}
                                             >
                                                 <MessageSquare className="mr-2 h-4 w-4" />
-                                                Follow Up
+                                                Follow Up Pelanggan
                                             </Button>
                                             <Button 
                                                 className="w-full" 
-                                                onClick={() => handleAction(order, 'complete')}
-                                                disabled={processingId === order.id}
+                                                onClick={() => handleAction(slice, 'complete')}
+                                                disabled={processingId === (parentTransaction.id + slice.tenantStoreId)}
                                             >
-                                                {processingId === order.id ? <Loader className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
-                                                Selesaikan
+                                                {processingId === (parentTransaction.id + slice.tenantStoreId) ? <Loader className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
+                                                Selesaikan Pesanan
                                             </Button>
                                         </>
                                     ) : (
                                         <Button 
                                             className="w-full" 
-                                            onClick={() => handleAction(order, 'ready')}
-                                            disabled={processingId === order.id || order.status === 'Siap Diambil'}
+                                            onClick={() => handleAction(slice, 'ready')}
+                                            disabled={processingId === (parentTransaction.id + slice.tenantStoreId) || parentTransaction.status === 'Siap Diambil'}
                                         >
-                                            {processingId === order.id ? <Loader className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+                                            {processingId === (parentTransaction.id + slice.tenantStoreId) ? <Loader className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
                                             Pesanan Siap
                                         </Button>
                                     )}
