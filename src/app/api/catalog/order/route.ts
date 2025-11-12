@@ -18,7 +18,6 @@ export async function POST(req: NextRequest) {
         const itemsByTenant = cart.reduce((acc, item) => {
             const tenantId = item.storeId;
             if (!tenantId) {
-                // Skip items that don't have a storeId, though in pujasera context they should.
                 console.warn(`Skipping item without storeId: ${item.productName}`);
                 return acc;
             }
@@ -30,21 +29,16 @@ export async function POST(req: NextRequest) {
         }, {} as Record<string, CartItem[]>);
         
         const batch = db.batch();
-        const createdTransactions: Transaction[] = [];
+        const createdTransactionsForTenants: Transaction[] = [];
 
-        // Create a separate transaction for each tenant
+        // 1. Create a separate transaction for each tenant to appear in their kitchen
         for (const tenantId in itemsByTenant) {
             const tenantItems = itemsByTenant[tenantId];
             const tenantSubtotal = tenantItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
-            // Note: Tax and service fee are calculated on the frontend for the whole cart.
-            // For simplicity here, we're not recalculating per-tenant tax/service fee,
-            // but we are creating separate transactions.
-            // This simplification is acceptable for kitchen processing.
-
             const tenantStoreRef = db.collection('stores').doc(tenantId);
             const tenantStoreSnap = await tenantStoreRef.get();
-            if (!tenantStoreSnap.exists) {
+            if (!tenantStoreSnap.exists()) {
                 console.error(`Tenant store with ID ${tenantId} not found. Skipping.`);
                 continue;
             }
@@ -52,44 +46,74 @@ export async function POST(req: NextRequest) {
             const currentCounter = tenantStoreSnap.data()?.transactionCounter || 0;
             const newReceiptNumber = currentCounter + 1;
             
-            // Increment tenant's transaction counter
             batch.update(tenantStoreRef, { transactionCounter: FieldValue.increment(1) });
             
-            // Create the new transaction document in the tenant's subcollection
             const newTransactionRef = db.collection('stores').doc(tenantId).collection('transactions').doc();
             
             const newTransactionData: Omit<Transaction, 'id'> = {
                 receiptNumber: newReceiptNumber,
-                storeId: tenantId, // The ID of the tenant, not the pujasera
+                storeId: tenantId,
                 customerId: customer.id,
                 customerName: customer.name,
-                staffId: 'CATALOG_SYSTEM', // System-generated transaction
+                staffId: 'CATALOG_SYSTEM',
                 createdAt: new Date().toISOString(),
                 items: tenantItems,
                 subtotal: tenantSubtotal,
-                // These financial details are simplified for this split transaction
                 discountAmount: 0,
                 taxAmount: 0, 
                 serviceFeeAmount: 0,
                 totalAmount: tenantSubtotal, 
-                paymentMethod: 'Belum Dibayar', // They pay at the central cashier
-                status: 'Diproses', // <<<<<<<<<<<< KEY CHANGE: This makes it appear in the kitchen
-                pointsEarned: 0, // Points are calculated at final checkout
+                paymentMethod: 'Belum Dibayar',
+                status: 'Diproses',
+                pointsEarned: 0,
                 pointsRedeemed: 0,
-                // We can add a reference to the overall order if needed later
-                // e.g., parentOrderId: some-unique-id-for-the-whole-cart
             };
             
             batch.set(newTransactionRef, newTransactionData);
-            createdTransactions.push({ id: newTransactionRef.id, ...newTransactionData });
+            createdTransactionsForTenants.push({ id: newTransactionRef.id, ...newTransactionData });
         }
+
+        // 2. Create a single parent transaction for the main pujasera cashier
+        const pujaseraStoreRef = db.collection('stores').doc(pujaseraId);
+        const pujaseraStoreSnap = await pujaseraStoreRef.get();
+        if (!pujaseraStoreSnap.exists()) {
+            throw new Error(`Pujasera store with ID ${pujaseraId} not found.`);
+        }
+        
+        const pujaseraCounter = pujaseraStoreSnap.data()?.transactionCounter || 0;
+        const pujaseraReceiptNumber = pujaseraCounter + 1;
+
+        batch.update(pujaseraStoreRef, { transactionCounter: FieldValue.increment(1) });
+        
+        const parentTransactionRef = db.collection('stores').doc(pujaseraId).collection('transactions').doc();
+        const parentTransactionData: Omit<Transaction, 'id'> = {
+            receiptNumber: pujaseraReceiptNumber,
+            storeId: pujaseraId,
+            customerId: customer.id,
+            customerName: customer.name,
+            staffId: 'CATALOG_SYSTEM',
+            createdAt: new Date().toISOString(),
+            items: cart, // The full cart
+            subtotal,
+            taxAmount,
+            serviceFeeAmount,
+            discountAmount: 0,
+            totalAmount,
+            paymentMethod: 'Belum Dibayar',
+            status: 'Belum Dibayar', // This status is for the cashier, not the kitchen
+            pointsEarned: 0,
+            pointsRedeemed: 0,
+        };
+
+        batch.set(parentTransactionRef, parentTransactionData);
 
         await batch.commit();
 
         return NextResponse.json({ 
             success: true, 
-            message: `Pesanan berhasil dikirim ke ${Object.keys(itemsByTenant).length} tenant.`,
-            transactions: createdTransactions 
+            message: `Pesanan berhasil dikirim ke ${Object.keys(itemsByTenant).length} tenant dan ke kasir pusat.`,
+            tenantTransactions: createdTransactionsForTenants,
+            parentTransactionId: parentTransactionRef.id,
         });
 
     } catch (error) {
