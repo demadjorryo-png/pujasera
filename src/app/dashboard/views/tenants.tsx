@@ -118,7 +118,7 @@ function TenantDetailDialog({ tenant, open, onOpenChange, onStatusToggle, isProc
                     </div>
                     <div className="flex items-center justify-between rounded-lg border p-3">
                         <span className="text-sm text-muted-foreground flex items-center gap-2"><Settings2/> Mode POS</span>
-                        <Badge variant="outline">{tenant.posMode === 'terpusat' ? 'Terpusat' : 'Sendiri'}</Badge>
+                        <Badge variant="outline">Terpusat</Badge>
                     </div>
                      <div className="flex items-center justify-between rounded-lg border p-3">
                         <span className="text-sm text-muted-foreground flex items-center gap-2">Status POS</span>
@@ -159,27 +159,6 @@ export default function TenantsManagement() {
   const handleRowClick = (tenant: Store) => {
     setSelectedTenant(tenant);
     setIsDetailDialogOpen(true);
-  };
-
-  const handlePosModeChange = async (tenantId: string, newMode: PosMode) => {
-    setUpdatingTenantId(tenantId);
-    try {
-        const tenantRef = doc(db, 'stores', tenantId);
-        await updateDoc(tenantRef, { posMode: newMode });
-        toast({
-            title: 'Mode POS Diperbarui',
-            description: `Mode kasir untuk tenant telah diubah menjadi "${newMode}".`,
-        });
-        refreshData(); 
-    } catch (error) {
-        toast({
-            variant: 'destructive',
-            title: 'Gagal Memperbarui Mode',
-            description: (error as Error).message,
-        });
-    } finally {
-        setUpdatingTenantId(null);
-    }
   };
 
   const handleTogglePosStatus = async (tenant: Store) => {
@@ -252,7 +231,7 @@ export default function TenantsManagement() {
                 <TableHeader>
                     <TableRow>
                         <TableHead>Nama Tenant</TableHead>
-                        <TableHead className="text-center">Mode POS</TableHead>
+                        <TableHead className="text-center">Status POS</TableHead>
                     </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -260,32 +239,15 @@ export default function TenantsManagement() {
                         Array.from({ length: 3 }).map((_, i) => (
                             <TableRow key={i}>
                                 <TableCell><Skeleton className="h-5 w-32" /></TableCell>
-                                <TableCell className="text-center"><Skeleton className="h-10 w-32 mx-auto" /></TableCell>
+                                <TableCell className="text-center"><Skeleton className="h-10 w-24 mx-auto" /></TableCell>
                             </TableRow>
                         ))
                     ) : (
                         pujaseraTenants.map((tenant) => (
                             <TableRow key={tenant.id} onClick={() => handleRowClick(tenant)} className="cursor-pointer">
                                 <TableCell className="font-medium">{tenant.name}</TableCell>
-                                <TableCell className="text-center w-48" onClick={(e) => e.stopPropagation()}>
-                                    {updatingTenantId === tenant.id ? (
-                                        <div className="flex justify-center">
-                                            <Loader2 className='h-5 w-5 animate-spin' />
-                                        </div>
-                                    ) : (
-                                        <Select 
-                                            value={tenant.posMode || 'sendiri'}
-                                            onValueChange={(value: PosMode) => handlePosModeChange(tenant.id, value)}
-                                        >
-                                            <SelectTrigger className="mx-auto w-auto">
-                                                <SelectValue placeholder="Pilih mode..." />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="terpusat">Terpusat</SelectItem>
-                                                <SelectItem value="sendiri">Sendiri</SelectItem>
-                                            </SelectContent>
-                                        </Select>
-                                    )}
+                                <TableCell className="text-center w-48">
+                                    <Badge variant={tenant.isPosEnabled !== false ? "default" : "destructive"} className={cn(tenant.isPosEnabled !== false && 'bg-green-600')}>{tenant.isPosEnabled !== false ? "Aktif" : "Non-Aktif"}</Badge>
                                 </TableCell>
                             </TableRow>
                         ))

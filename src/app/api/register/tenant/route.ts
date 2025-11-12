@@ -96,6 +96,7 @@ export async function POST(req: NextRequest) {
       pujaseraGroupSlug: pujaseraGroupSlug,
       pujaseraName: pujaseraData.name || '',
       isPosEnabled: true, // Tenants are enabled by default
+      posMode: 'terpusat', // Default to centralized POS mode
     });
 
     // Create the user document for the tenant admin
