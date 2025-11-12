@@ -13,7 +13,8 @@ import { doc, writeBatch, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/contexts/auth-context';
 import { Badge } from '@/components/ui/badge';
-import type { Transaction } from '@/lib/types';
+import type { Transaction, TransactionStatus } from '@/lib/types';
+import { cn } from '@/lib/utils';
 
 type KitchenProps = {
     onFollowUpRequest: (transaction: Transaction) => void;
@@ -35,7 +36,7 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
             : transactions.filter(t => t.storeId === activeStore?.id);
 
         return relevantTransactions
-            .filter(t => t.status === 'Diproses')
+            .filter(t => t.status === 'Diproses' || t.status === 'Siap Diambil')
             .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     }, [transactions, currentUser?.role, activeStore?.id]);
     
@@ -97,6 +98,17 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
     
     const isPujaseraUser = currentUser?.role === 'pujasera_admin' || currentUser?.role === 'pujasera_cashier';
 
+    const getStatusBadge = (status: TransactionStatus) => {
+        switch(status) {
+            case 'Diproses':
+                return <Badge variant="secondary" className='bg-amber-500/20 text-amber-800 border-amber-500/50'>{status}</Badge>;
+            case 'Siap Diambil':
+                 return <Badge variant="secondary" className='bg-sky-500/20 text-sky-800 border-sky-500/50'>{status}</Badge>;
+            default:
+                return <Badge variant="outline">{status}</Badge>;
+        }
+    }
+
     return (
         <div className="h-[calc(100vh-8rem)] flex flex-col">
             <ScrollArea className="flex-grow">
@@ -112,7 +124,7 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                                                 {formatDistanceToNow(new Date(order.createdAt), { addSuffix: true, locale: idLocale })}
                                             </CardDescription>
                                         </div>
-                                        <Badge variant="secondary" className='bg-amber-500/20 text-amber-800 border-amber-500/50'>{order.status}</Badge>
+                                        {getStatusBadge(order.status)}
                                     </div>
                                 </CardHeader>
                                 <CardContent className="flex-grow space-y-2">
@@ -159,7 +171,7 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                                         <Button 
                                             className="w-full" 
                                             onClick={() => handleAction(order, 'ready')}
-                                            disabled={processingId === order.id}
+                                            disabled={processingId === order.id || order.status === 'Siap Diambil'}
                                         >
                                             {processingId === order.id ? <Loader className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
                                             Pesanan Siap
