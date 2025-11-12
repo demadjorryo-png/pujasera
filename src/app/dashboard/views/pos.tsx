@@ -66,7 +66,7 @@ import { cn } from '@/lib/utils';
 import { Label } from '@/components/ui/label';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { db, auth } from '@/lib/firebase';
-import { collection, doc, runTransaction, increment, serverTimestamp, getDoc, deleteDoc, getDocs, query, where, addDoc } from 'firebase/firestore';
+import { collection, doc, runTransaction, increment, serverTimestamp, getDoc, deleteDoc, getDocs, query, where, addDoc, writeBatch } from 'firebase/firestore';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth } from '@/contexts/auth-context';
 import { useDashboard } from '@/contexts/dashboard-context';
@@ -435,11 +435,15 @@ export default function POS({ onPrintRequest }: POSProps) {
     const finalStatus = isPujaseraContext ? 'Diproses' : (isPaid ? 'Selesai Dibayar' : 'Belum Dibayar');
 
     try {
-        const pujaseraStoreDoc = await getDoc(doc(db, 'stores', transactionStoreId));
+        const batch = writeBatch(db);
+
+        const pujaseraStoreRef = doc(db, 'stores', transactionStoreId);
+        const pujaseraStoreDoc = await getDoc(pujaseraStoreRef);
         if (!pujaseraStoreDoc.exists()) throw new Error("Toko pujasera tidak ditemukan.");
         
         const pujaseraCounter = pujaseraStoreDoc.data().transactionCounter || 0;
         const pujaseraReceiptNumber = pujaseraCounter + 1;
+        batch.update(pujaseraStoreRef, { transactionCounter: increment(1) });
         
         const newMainTransactionData: Omit<Transaction, 'id'> = {
             receiptNumber: pujaseraReceiptNumber,
@@ -458,11 +462,19 @@ export default function POS({ onPrintRequest }: POSProps) {
             pujaseraGroupSlug: activeStore.pujaseraGroupSlug
         };
 
-        const newTxRef = await addDoc(collection(db, 'stores', transactionStoreId, 'transactions'), newMainTransactionData);
+        const newTxRef = doc(collection(db, 'stores', transactionStoreId, 'transactions'));
+        batch.set(newTxRef, newMainTransactionData);
         
         const finalTransactionData: Transaction = { id: newTxRef.id, ...newMainTransactionData };
 
-        // The Cloud Function `onPujaseraTransactionCreate` will now handle the rest.
+        // Update table status if a table is selected
+        if (tableId) {
+            const tableRef = doc(db, 'stores', transactionStoreId, 'tables', tableId);
+            batch.update(tableRef, { status: 'Terisi' });
+        }
+
+        // The Cloud Function `onPujaseraTransactionCreate` will handle the rest of the logic.
+        await batch.commit();
 
         toast({ title: "Transaksi Berhasil!", description: "Pesanan telah dikirim untuk diproses oleh sistem." });
 
