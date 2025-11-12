@@ -106,6 +106,7 @@ export const onPujaseraTransactionCreate = onDocumentCreated("stores/{pujaseraId
     const pujaseraId = event.params.pujaseraId;
 
     // Only proceed if this transaction is for a pujasera group and is marked 'Diproses'
+    // This is the main guard to prevent the function from processing sub-transactions.
     if (!transactionData.pujaseraGroupSlug || transactionData.status !== 'Diproses') {
         return;
     }
@@ -423,3 +424,5 @@ export const sendDailySalesSummary = onSchedule({
         logger.error("Error dalam fungsi terjadwal sendDailySalesSummary:", error);
     }
 });
+
+    
