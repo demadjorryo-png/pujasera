@@ -1,26 +1,21 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getFirebaseAdmin } from '@/lib/server/firebase-admin';
-import { URLSearchParams } from 'url';
 import { getWhatsappSettings } from '@/lib/server/whatsapp-settings';
 
-
+// Helper function to send WhatsApp message directly
 async function internalSendWhatsapp(deviceId: string, target: string, message: string, isGroup: boolean = false) {
-    const body = new URLSearchParams();
-    body.append('device_id', deviceId);
-    body.append(isGroup ? 'group' : 'number', target);
-    body.append('message', message);
-    
+    const formData = new FormData();
+    formData.append('device_id', deviceId);
+    formData.append(isGroup ? 'group' : 'number', target);
+    formData.append('message', message);
     const endpoint = isGroup ? 'sendGroup' : 'send';
     const webhookUrl = `https://app.whacenter.com/api/${endpoint}`;
 
     try {
         const response = await fetch(webhookUrl, {
             method: 'POST',
-            body: body,
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded'
-            }
+            body: formData,
         });
 
         if (!response.ok) {
@@ -37,6 +32,7 @@ async function internalSendWhatsapp(deviceId: string, target: string, message: s
     }
 }
 
+// Helper function to format phone number
 function formatWhatsappNumber(nomor: string | number): string {
     if (!nomor) return '';
     let nomorStr = String(nomor).replace(/\D/g, '');
@@ -48,9 +44,6 @@ function formatWhatsappNumber(nomor: string | number): string {
     }
     return nomorStr;
 }
-
-// --- End of Inlined WhatsApp Logic ---
-
 
 export async function POST(req: NextRequest) {
     const { auth, db } = getFirebaseAdmin();
@@ -83,13 +76,22 @@ export async function POST(req: NextRequest) {
             requestedAt: new Date().toISOString(),
         };
 
-        // Write to the root collection 'topUpRequests'
-        await db.collection('topUpRequests').add(newRequestData);
-        console.info(`Top-up request submitted to root collection for store ${storeId} by user ${uid}`);
+        const batch = db.batch();
+
+        // 1. Write to the root collection 'topUpRequests'
+        const newRequestRef = db.collection('topUpRequests').doc();
+        batch.set(newRequestRef, newRequestData);
+        
+        // 2. Sync to the store's subcollection immediately
+        const historyRef = db.collection('stores').doc(storeId).collection('topUpRequests').doc(newRequestRef.id);
+        batch.set(historyRef, newRequestData);
+
+        await batch.commit();
+        console.info(`Top-up request ${newRequestRef.id} submitted and synced for store ${storeId}`);
 
         const successResponse = NextResponse.json({ success: true });
 
-        // --- Handle WhatsApp notifications in the background ---
+        // --- Handle WhatsApp notifications in the background (fire-and-forget) ---
         (async () => {
             try {
                 const { deviceId, adminGroup } = getWhatsappSettings();

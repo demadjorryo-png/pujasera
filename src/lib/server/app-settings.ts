@@ -1,7 +1,6 @@
 import { getFirebaseAdmin } from './firebase-admin'; // Use server-side db
 import type { TransactionFeeSettings } from '../types';
 import { doc, runTransaction, increment } from 'firebase/firestore';
-import type { useToast } from '@/hooks/use-toast';
 
 // Default settings in case the document doesn't exist in Firestore
 export const defaultFeeSettings: TransactionFeeSettings = {
