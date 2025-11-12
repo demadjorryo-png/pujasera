@@ -199,33 +199,44 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
             const allStoreIds = isPujaseraUser 
                 ? Array.from(new Set([storeId, ...pujaseraTenants.map(t => t.id)]))
                 : [storeId];
-                
-            const transactionsQuery = query(collectionGroup(db, 'transactions'), where('storeId', 'in', allStoreIds));
-
-            return onSnapshot(transactionsQuery, (snapshot) => {
-                const newTransactions = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
-                
-                 snapshot.docChanges().forEach((change) => {
-                    if (change.type === "added") {
-                        const newTx = change.doc.data() as Transaction;
-                        if (newTx.status === 'Diproses' && !notifiedTransactionsRef.current.has(change.doc.id)) {
+        
+            // Unsubscribe from previous listeners before creating new ones
+            unsubscribes.forEach(unsub => unsub());
+            unsubscribes = [];
+        
+            const allTransactions: { [id: string]: Transaction } = {};
+        
+            allStoreIds.forEach(sId => {
+                const transactionsQuery = query(collection(db, 'stores', sId, 'transactions'));
+                const unsubscribe = onSnapshot(transactionsQuery, (snapshot) => {
+                    snapshot.docChanges().forEach((change) => {
+                        const docData = { id: change.doc.id, ...change.doc.data() } as Transaction;
+                        if (change.type === 'removed') {
+                            delete allTransactions[change.doc.id];
+                        } else {
+                            allTransactions[change.doc.id] = docData;
+                        }
+        
+                        if (change.type === "added" && docData.status === 'Diproses' && !notifiedTransactionsRef.current.has(change.doc.id)) {
                              setTimeout(() => {
                                 toast({
-                                    title: "🔔 Pesanan Baru Masuk!",
-                                    description: `Ada pesanan baru untuk nota #${String(newTx.receiptNumber).padStart(6, '0')}.`,
+                                    title: `🔔 Pesanan Baru (Nota #${String(docData.receiptNumber).padStart(6, '0')})`,
+                                    description: `Ada pesanan baru untuk pelanggan ${docData.customerName}.`,
                                 });
                                 playNotificationSound();
                             }, 0);
                             notifiedTransactionsRef.current.add(change.doc.id);
                         }
-                    }
-                });
-
-                setTransactions(newTransactions);
-            }, (error) => console.error(`Error listening to transactions:`, error));
+                    });
+        
+                    setTransactions(Object.values(allTransactions));
+                }, (error) => console.error(`Error listening to transactions for store ${sId}:`, error));
+        
+                unsubscribes.push(unsubscribe);
+            });
         };
         
-        unsubscribes.push(setupTransactionListener());
+        setupTransactionListener();
 
         // Listen to tables for all users with an active store
         const tablesQuery = query(collection(db, 'stores', storeId, 'tables'), orderBy('name'));
