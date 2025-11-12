@@ -208,10 +208,13 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
                     if (newOrders.length > 0) {
                         playNotificationSound();
                         newOrders.forEach(order => {
-                            toast({
-                                title: "🔔 Pesanan Baru Masuk!",
-                                description: `Ada pesanan baru untuk nota #${String(order.receiptNumber).padStart(6, '0')}.`,
-                            });
+                            // Defer toast to next tick to avoid state update during render
+                            setTimeout(() => {
+                                toast({
+                                    title: "🔔 Pesanan Baru Masuk!",
+                                    description: `Ada pesanan baru untuk nota #${String(order.receiptNumber).padStart(6, '0')}.`,
+                                });
+                            }, 0);
                         });
                     }
 
