@@ -189,34 +189,34 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     }
 
     let unsubscribes: Unsubscribe[] = [];
-
     const isPujaseraUser = currentUser.role === 'pujasera_admin' || currentUser.role === 'pujasera_cashier';
     const storeId = activeStore?.id;
 
     if (storeId) {
-        
         const setupTransactionListener = () => {
-            const allStoreIds = isPujaseraUser 
-                ? Array.from(new Set([storeId, ...pujaseraTenants.map(t => t.id)]))
+            // For pujasera users, we listen to sub-transactions in each tenant store.
+            // For regular users, we listen to transactions in their own store.
+            const targetStoreIds = isPujaseraUser 
+                ? pujaseraTenants.map(t => t.id)
                 : [storeId];
-        
-            // Unsubscribe from previous listeners before creating new ones
+            
+            // Clean up previous listeners
             unsubscribes.forEach(unsub => unsub());
             unsubscribes = [];
-        
-            const allTransactions: { [id: string]: Transaction } = {};
-        
-            allStoreIds.forEach(sId => {
+            
+            const transactionsMap: { [id: string]: Transaction } = {};
+
+            targetStoreIds.forEach(sId => {
                 const transactionsQuery = query(collection(db, 'stores', sId, 'transactions'));
                 const unsubscribe = onSnapshot(transactionsQuery, (snapshot) => {
                     snapshot.docChanges().forEach((change) => {
                         const docData = { id: change.doc.id, ...change.doc.data() } as Transaction;
                         if (change.type === 'removed') {
-                            delete allTransactions[change.doc.id];
+                            delete transactionsMap[change.doc.id];
                         } else {
-                            allTransactions[change.doc.id] = docData;
+                            transactionsMap[change.doc.id] = docData;
                         }
-        
+
                         if (change.type === "added" && docData.status === 'Diproses' && !notifiedTransactionsRef.current.has(change.doc.id)) {
                              setTimeout(() => {
                                 toast({
@@ -224,29 +224,27 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
                                     description: `Ada pesanan baru untuk pelanggan ${docData.customerName}.`,
                                 });
                                 playNotificationSound();
-                            }, 0);
+                            }, 100);
                             notifiedTransactionsRef.current.add(change.doc.id);
                         }
                     });
-        
-                    setTransactions(Object.values(allTransactions));
+                    
+                    setTransactions(Object.values(transactionsMap).sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+
                 }, (error) => console.error(`Error listening to transactions for store ${sId}:`, error));
-        
+
                 unsubscribes.push(unsubscribe);
             });
         };
-        
+
         setupTransactionListener();
 
-        // Listen to tables for all users with an active store
         const tablesQuery = query(collection(db, 'stores', storeId, 'tables'), orderBy('name'));
         const unsubTables = onSnapshot(tablesQuery, (snapshot) => {
-            const newTables = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Table));
-            setTables(newTables);
+            setTables(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Table)));
         }, (error) => console.error("Error listening to tables: ", error));
         unsubscribes.push(unsubTables);
 
-        // Listen to pending orders (for all store types)
         const pendingOrdersQuery = query(collection(db, 'pendingOrders'));
         const unsubPendingOrders = onSnapshot(pendingOrdersQuery, (snapshot) => {
             setPendingOrders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PendingOrder)));
