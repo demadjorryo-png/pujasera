@@ -24,9 +24,13 @@ export async function POST(req: NextRequest) {
     const callerDocRef = db.collection('users').doc(callerUid);
     const callerDoc = await callerDocRef.get();
     
-    if (!callerDoc.exists || callerDoc.data()?.role !== 'admin') {
-      return NextResponse.json({ error: 'Permission denied: Caller is not an admin' }, { status: 403 });
+    const callerRole = callerDoc.data()?.role;
+    const allowedRoles = ['admin', 'pujasera_admin'];
+
+    if (!callerDoc.exists || !callerRole || !allowedRoles.includes(callerRole)) {
+      return NextResponse.json({ error: 'Permission denied: Only admins can create employees.' }, { status: 403 });
     }
+
 
     // 4. Create User in Firebase Authentication using Admin SDK
     const userRecord = await auth.createUser({
