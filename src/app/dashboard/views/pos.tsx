@@ -1,3 +1,4 @@
+
 'use client';
 
 import * as React from 'react';
@@ -203,7 +204,8 @@ export default function POS({ onPrintRequest }: POSProps) {
                     productName: product?.name || orderItem.productName || 'Unknown Product',
                     price: product?.price || orderItem.price || 0,
                     notes: orderItem.notes || '',
-                    storeId: product?.storeId || orderItem.storeId
+                    storeId: product?.storeId || orderItem.storeId,
+                    storeName: product?.storeName || orderItem.storeName,
                 };
             });
             setCart(reconstructedCart);
@@ -902,3 +904,5 @@ export default function POS({ onPrintRequest }: POSProps) {
     </>
   );
 }
+
+    
