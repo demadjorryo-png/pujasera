@@ -100,6 +100,7 @@ export function MainSidebar({ pradanaTokenBalance }: MainSidebarProps) {
         items: [
             { view: 'pujasera-overview', label: 'Overview Pujasera', icon: <LayoutGrid />, roles: ['pujasera_admin'] },
             { view: 'pujasera-pos', label: 'Kasir Pujasera', icon: <Armchair />, roles: ['pujasera_cashier', 'pujasera_admin'], tourId: 'sidebar-pos' },
+            { view: 'transactions', label: 'Transaksi', icon: <History />, roles: ['pujasera_admin', 'pujasera_cashier'], tourId: 'sidebar-transactions' },
             { view: 'kitchen', label: 'Dapur Terpusat', icon: <ChefHat />, roles: ['pujasera_admin', 'pujasera_cashier'], tourId: 'sidebar-kitchen' },
             { view: 'tenants', label: 'Manajemen Tenant', icon: <Store />, roles: ['pujasera_admin'], tourId: 'sidebar-tenants' },
             { view: 'employees', label: 'Manajemen Karyawan', icon: <Users />, roles: ['pujasera_admin'], tourId: 'sidebar-employees' },
