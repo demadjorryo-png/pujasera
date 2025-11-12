@@ -104,6 +104,7 @@ export function MainSidebar({ pradanaTokenBalance }: MainSidebarProps) {
             { view: 'kitchen', label: 'Dapur Terpusat', icon: <ChefHat />, roles: ['pujasera_admin', 'pujasera_cashier'], tourId: 'sidebar-kitchen' },
             { view: 'tenants', label: 'Manajemen Tenant', icon: <Store />, roles: ['pujasera_admin'], tourId: 'sidebar-tenants' },
             { view: 'employees', label: 'Manajemen Karyawan', icon: <Users />, roles: ['pujasera_admin'], tourId: 'sidebar-employees' },
+            { view: 'customers', label: 'Pelanggan', icon: <Contact2 />, roles: ['pujasera_admin', 'pujasera_cashier'], tourId: 'sidebar-customers' },
             { view: 'promotions', label: 'Promo Pujasera', icon: <Gift />, roles: ['pujasera_admin'], tourId: 'sidebar-promotions' },
             { view: 'challenges', label: 'Tantangan Tenant', icon: <Trophy />, roles: ['pujasera_admin'], tourId: 'sidebar-challenges' },
             { view: 'catalog', label: 'Katalog Publik', icon: <Newspaper />, roles: ['pujasera_admin'], tourId: 'sidebar-catalog' },
