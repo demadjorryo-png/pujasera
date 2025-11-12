@@ -75,7 +75,7 @@ export function TransactionDetailsDialog({
 }) {
     if (!transaction) return null;
 
-    const { activeStore } = useAuth();
+    const { activeStore, currentUser } = useAuth();
     const { toast } = useToast();
     const { refreshData, dashboardData } = useDashboard();
     
@@ -85,8 +85,9 @@ export function TransactionDetailsDialog({
     const [paymentMethodForDialog, setPaymentMethodForDialog] = React.useState<'Cash' | 'Card' | 'QRIS'>('Cash');
 
     const staff = (users || []).find(u => u.id === transaction.staffId);
-    const isRefundable = transaction.status !== 'Dibatalkan';
     const { feeSettings } = dashboardData;
+    const isPujaseraUser = currentUser?.role === 'pujasera_admin' || currentUser?.role === 'pujasera_cashier';
+    const isRefundable = transaction.status !== 'Dibatalkan';
     
     const handleProcessPayment = async () => {
         if (!transactionToPay || !activeStore) return;
@@ -112,12 +113,17 @@ export function TransactionDetailsDialog({
             await runTransaction(db, async (transactionRun) => {
                 const storeRef = doc(db, 'stores', activeStore.id);
                 const transRef = doc(db, 'stores', activeStore.id, 'transactions', transactionToRefund.id);
-                for (const item of transactionToRefund.items) {
-                     if (!item.productId.startsWith('manual-')) {
-                        const productRef = doc(db, 'stores', activeStore.id, 'products', item.productId);
-                        transactionRun.update(productRef, { stock: increment(item.quantity) });
-                     }
+                
+                // For pujasera, we can't easily revert stock. This logic is simplified.
+                if (!isPujaseraUser) {
+                    for (const item of transactionToRefund.items) {
+                         if (!item.productId.startsWith('manual-')) {
+                            const productRef = doc(db, 'stores', activeStore.id, 'products', item.productId);
+                            transactionRun.update(productRef, { stock: increment(item.quantity) });
+                         }
+                    }
                 }
+                
                 if (transactionToRefund.customerId !== 'N/A' && dashboardData.customers.find(c => c.id === transactionToRefund.customerId)) {
                     const customerRef = doc(db, 'stores', activeStore.id, 'customers', transactionToRefund.customerId);
                     const pointsToRevert = transactionToRefund.pointsRedeemed - transactionToRefund.pointsEarned;
@@ -129,7 +135,7 @@ export function TransactionDetailsDialog({
                 transactionRun.update(storeRef, { pradanaTokenBalance: increment(feeToRefund) });
                 transactionRun.update(transRef, { status: 'Dibatalkan' });
             });
-            toast({ title: "Transaksi Dibatalkan", description: "Stok, poin, dan token telah dikembalikan." });
+            toast({ title: "Transaksi Dibatalkan", description: "Poin dan token telah dikembalikan. Stok tidak dikembalikan untuk pujasera." });
             refreshData();
             setTransactionToRefund(null);
             onOpenChange(false);
@@ -218,12 +224,27 @@ export function TransactionDetailsDialog({
                    </div>
                 </div>
                  <DialogFooter className="pt-4 border-t">
-                    <div className="flex w-full items-center justify-between gap-1">
-                        <Button variant="outline" size="sm" className="gap-2" onClick={() => onOpenChange(false)}>
-                            Tutup
-                        </Button>
-                        <div className="flex items-center gap-1">
-                           <Button variant="outline" size="sm" className="h-8 gap-2" onClick={() => onPrintRequest(transaction)}><Printer className="mr-2 h-4 w-4"/> Cetak Struk</Button>
+                    <div className="flex w-full items-center justify-between flex-wrap gap-2">
+                        <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>Tutup</Button>
+                        <div className="flex items-center gap-2 flex-wrap justify-end">
+                            {transaction.status === 'Belum Dibayar' && (
+                                <Button size="sm" onClick={() => setTransactionToPay(transaction)}>
+                                    <CreditCard className="mr-2 h-4 w-4"/> Proses Pembayaran
+                                </Button>
+                            )}
+                            {transaction.status === 'Diproses' && (
+                                <Button size="sm" variant="outline" onClick={() => onFollowUpRequest(transaction)}>
+                                    <Send className="mr-2 h-4 w-4"/> Follow Up
+                                </Button>
+                            )}
+                            {isPujaseraUser && isRefundable && (
+                                <Button size="sm" variant="destructive" onClick={() => setTransactionToRefund(transaction)}>
+                                    <Undo2 className="mr-2 h-4 w-4" /> Batalkan
+                                </Button>
+                            )}
+                            <Button variant="outline" size="sm" onClick={() => onPrintRequest(transaction)}>
+                                <Printer className="mr-2 h-4 w-4"/> Cetak Struk
+                            </Button>
                         </div>
                     </div>
                 </DialogFooter>
@@ -235,7 +256,7 @@ export function TransactionDetailsDialog({
             <AlertDialogContent>
               <AlertDialogHeader>
                 <AlertDialogTitle>Batalkan &amp; Kembalikan Dana?</AlertDialogTitle>
-                <AlertDialogDescription>Transaksi ini akan dibatalkan. Stok, poin, dan biaya token akan dikembalikan. Tindakan ini tidak dapat diurungkan.</AlertDialogDescription>
+                <AlertDialogDescription>Transaksi ini akan dibatalkan. Poin dan biaya token akan dikembalikan. Stok tidak akan dikembalikan untuk transaksi pujasera. Tindakan ini tidak dapat diurungkan.</AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel>Batal</AlertDialogCancel>
