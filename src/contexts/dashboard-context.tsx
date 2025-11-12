@@ -194,18 +194,17 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
     if (storeId) {
         const setupTransactionListener = () => {
-            // For pujasera users, we listen to sub-transactions in each tenant store.
-            // For regular users, we listen to transactions in their own store.
-            const targetStoreIds = isPujaseraUser 
-                ? pujaseraTenants.map(t => t.id)
-                : [storeId];
-            
             // Clean up previous listeners
             unsubscribes.forEach(unsub => unsub());
             unsubscribes = [];
             
             const transactionsMap: { [id: string]: Transaction } = {};
+            let isInitialLoad = true;
 
+            const targetStoreIds = isPujaseraUser
+                ? pujaseraTenants.map(t => t.id)
+                : [storeId];
+            
             targetStoreIds.forEach(sId => {
                 const transactionsQuery = query(collection(db, 'stores', sId, 'transactions'));
                 const unsubscribe = onSnapshot(transactionsQuery, (snapshot) => {
@@ -217,7 +216,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
                             transactionsMap[change.doc.id] = docData;
                         }
 
-                        if (change.type === "added" && docData.status === 'Diproses' && !notifiedTransactionsRef.current.has(change.doc.id)) {
+                        // Only notify for new additions after the initial load
+                        if (!isInitialLoad && change.type === "added" && docData.status === 'Diproses' && !notifiedTransactionsRef.current.has(change.doc.id)) {
                              setTimeout(() => {
                                 toast({
                                     title: `🔔 Pesanan Baru (Nota #${String(docData.receiptNumber).padStart(6, '0')})`,
@@ -230,6 +230,10 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
                     });
                     
                     setTransactions(Object.values(transactionsMap).sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+                    
+                    if (isInitialLoad) {
+                      isInitialLoad = false;
+                    }
 
                 }, (error) => console.error(`Error listening to transactions for store ${sId}:`, error));
 
