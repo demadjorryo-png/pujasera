@@ -1,5 +1,3 @@
-
-
 'use client';
 
 import * as React from 'react';
@@ -10,8 +8,8 @@ import { useToast } from '@/hooks/use-toast';
 import { formatDistanceToNow } from 'date-fns';
 import { id as idLocale } from 'date-fns/locale';
 import { Button } from '@/components/ui/button';
-import { CheckCircle, ChefHat, Loader, MessageSquare, Printer } from 'lucide-react';
-import { doc, writeBatch, getDoc } from 'firebase/firestore';
+import { CheckCircle, ChefHat, Loader, MessageSquare, Printer, Send } from 'lucide-react';
+import { doc, writeBatch, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/contexts/auth-context';
 import { Badge } from '@/components/ui/badge';
@@ -23,62 +21,81 @@ type KitchenProps = {
 };
 
 export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: KitchenProps) {
-    const { dashboardData } = useDashboard();
+    const { dashboardData, refreshData } = useDashboard();
     const { activeStore, currentUser } = useAuth();
     const { transactions } = dashboardData;
     const { toast } = useToast();
-    const [completingId, setCompletingId] = React.useState<string | null>(null);
+    const [processingId, setProcessingId] = React.useState<string | null>(null);
 
     const activeOrders = React.useMemo(() => {
-        return transactions
+        // For pujasera users, they see all 'Diproses' transactions in their group.
+        // For tenant users, they only see their own 'Diproses' transactions.
+        const relevantTransactions = currentUser?.role === 'pujasera_admin' || currentUser?.role === 'pujasera_cashier'
+            ? transactions
+            : transactions.filter(t => t.storeId === activeStore?.id);
+
+        return relevantTransactions
             .filter(t => t.status === 'Diproses')
             .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-    }, [transactions]);
+    }, [transactions, currentUser?.role, activeStore?.id]);
     
-    const handleCompleteOrder = async (transactionId: string) => {
+    const handleAction = async (transaction: Transaction, action: 'complete' | 'ready') => {
         if (!activeStore) return;
-        setCompletingId(transactionId);
+        setProcessingId(transaction.id);
+        
+        const isPujaseraAction = currentUser?.role === 'pujasera_admin' || currentUser?.role === 'pujasera_cashier';
+        
+        // Determine the correct storeId for the transaction document.
+        // For pujasera, it's the pujasera's storeId. For tenants, it's their own storeId.
+        const txStoreId = isPujaseraAction && transaction.pujaseraGroupSlug ? activeStore.id : transaction.storeId;
         
         try {
-            const transactionRef = doc(db, 'stores', activeStore.id, 'transactions', transactionId);
+            const transactionRef = doc(db, 'stores', txStoreId, 'transactions', transaction.id);
             const transactionDoc = await getDoc(transactionRef);
 
             if (!transactionDoc.exists()) {
                 throw new Error("Transaksi tidak ditemukan.");
             }
 
-            const transactionData = transactionDoc.data();
             const batch = writeBatch(db);
+            let successMessage = '';
 
-            // Update transaction status
-            batch.update(transactionRef, { status: 'Selesai' });
+            if (action === 'complete') {
+                batch.update(transactionRef, { status: 'Selesai' });
+                successMessage = `Pesanan untuk ${transaction.customerName} telah ditandai selesai.`;
 
-            // If it's a table order, update table status
-            if (transactionData.tableId) {
-                const tableRef = doc(db, 'stores', activeStore.id, 'tables', transactionData.tableId);
-                const tableDoc = await getDoc(tableRef);
-                if (tableDoc.exists()) {
-                    batch.update(tableRef, { status: 'Menunggu Dibersihkan' });
+                if (transaction.tableId) {
+                    const tableRef = doc(db, 'stores', txStoreId, 'tables', transaction.tableId);
+                    const tableDoc = await getDoc(tableRef);
+                    if (tableDoc.exists()) {
+                        batch.update(tableRef, { status: 'Menunggu Dibersihkan' });
+                    }
                 }
+            } else if (action === 'ready') {
+                batch.update(transactionRef, { status: 'Siap Diambil' });
+                successMessage = `Pesanan tenant ${activeStore.name} siap diambil.`;
             }
 
             await batch.commit();
 
             toast({
-                title: 'Pesanan Selesai!',
-                description: `Pesanan untuk ${transactionData.customerName} telah ditandai selesai.`,
+                title: 'Status Diperbarui!',
+                description: successMessage,
             });
+            refreshData();
         } catch (error) {
-            console.error("Error completing order from kitchen:", error);
+            console.error("Error processing kitchen action:", error);
             toast({
                 variant: "destructive",
-                title: "Gagal Menyelesaikan Pesanan",
+                title: "Gagal Memperbarui Status",
                 description: (error as Error).message
             });
         } finally {
-            setCompletingId(null);
+            setProcessingId(null);
         }
     };
+    
+    const isPujaseraUser = currentUser?.role === 'pujasera_admin' || currentUser?.role === 'pujasera_cashier';
 
     return (
         <div className="h-[calc(100vh-8rem)] flex flex-col">
@@ -114,31 +131,38 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                                      <Button 
                                         variant="outline"
                                         className="w-full" 
-                                        onClick={() => onFollowUpRequest(order)}
-                                    >
-                                        <MessageSquare className="mr-2 h-4 w-4" />
-                                        Follow Up Cerdas
-                                    </Button>
-                                    <Button 
-                                        variant="outline"
-                                        className="w-full" 
                                         onClick={() => onPrintStickerRequest(order)}
                                     >
                                         <Printer className="mr-2 h-4 w-4" />
                                         Cetak Stiker
                                     </Button>
-                                    {(currentUser?.role === 'admin' || currentUser?.role === 'cashier') && (
+                                    {isPujaseraUser ? (
+                                        <>
+                                            <Button 
+                                                variant="outline"
+                                                className="w-full" 
+                                                onClick={() => onFollowUpRequest(order)}
+                                            >
+                                                <MessageSquare className="mr-2 h-4 w-4" />
+                                                Follow Up
+                                            </Button>
+                                            <Button 
+                                                className="w-full" 
+                                                onClick={() => handleAction(order, 'complete')}
+                                                disabled={processingId === order.id}
+                                            >
+                                                {processingId === order.id ? <Loader className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
+                                                Selesaikan
+                                            </Button>
+                                        </>
+                                    ) : (
                                         <Button 
                                             className="w-full" 
-                                            onClick={() => handleCompleteOrder(order.id)}
-                                            disabled={completingId === order.id}
+                                            onClick={() => handleAction(order, 'ready')}
+                                            disabled={processingId === order.id}
                                         >
-                                            {completingId === order.id ? (
-                                                <Loader className="mr-2 h-4 w-4 animate-spin" />
-                                            ) : (
-                                                <CheckCircle className="mr-2 h-4 w-4" />
-                                            )}
-                                            Selesaikan Pesanan
+                                            {processingId === order.id ? <Loader className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+                                            Pesanan Siap
                                         </Button>
                                     )}
                                 </CardFooter>

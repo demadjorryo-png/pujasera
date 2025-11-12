@@ -109,7 +109,7 @@ export type Customer = {
   pujaseraGroup?: string; // To which pujasera group this customer belongs
 };
 
-export type TransactionStatus = 'Diproses' | 'Selesai' | 'Selesai Dibayar' | 'Belum Dibayar' | 'Dibatalkan';
+export type TransactionStatus = 'Diproses' | 'Siap Diambil' | 'Selesai' | 'Selesai Dibayar' | 'Belum Dibayar' | 'Dibatalkan';
 
 export type Transaction = {
   id: string;
