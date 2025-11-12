@@ -72,7 +72,7 @@ import { useDashboard } from '@/contexts/dashboard-context';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Switch } from '@/components/ui/switch';
 import type { PointEarningSettings } from '@/lib/types';
-import { getPointEarningSettings } from '@/lib/server/point-earning-settings';
+import { getPointEarningSettings } from '@/lib/point-earning-settings';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 
@@ -421,7 +421,7 @@ export default function POS({ onPrintRequest }: POSProps) {
     // For pujasera context, the transaction is associated with the pujasera's store ID
     const transactionStoreId = activeStore.id;
     const finalPaymentMethod = isPaid ? paymentMethod : 'Belum Dibayar';
-    const finalStatus = 'Selesai Dibayar';
+    const finalStatus = isPujaseraContext ? 'Selesai Dibayar' : (isPaid ? 'Selesai Dibayar' : 'Belum Dibayar');
 
     try {
       let finalTransactionData: Transaction | null = null;
@@ -453,7 +453,7 @@ export default function POS({ onPrintRequest }: POSProps) {
         const pujaseraStoreDoc = await transaction.get(pujaseraStoreRef);
         if (!pujaseraStoreDoc.exists()) throw new Error("Toko pujasera tidak ditemukan.");
         
-        const customerRef = selectedCustomer ? doc(db, 'customers', selectedCustomer.id) : null;
+        const customerRef = selectedCustomer ? doc(db, 'stores', activeStore.id, 'customers', selectedCustomer.id) : null;
         if(customerRef) {
           const customerDoc = await transaction.get(customerRef);
           if (selectedCustomer && !customerDoc?.exists()) {
@@ -480,6 +480,7 @@ export default function POS({ onPrintRequest }: POSProps) {
             status: finalStatus, // Always 'Selesai Dibayar' for the main receipt
             pointsEarned, 
             pointsRedeemed: 0, // pointsRedeemed is not implemented in UI yet
+            tableId: tableId || undefined,
         };
         batch.set(newMainTransactionRef, mainTransactionData);
         batch.update(pujaseraStoreRef, { transactionCounter: increment(1) });
