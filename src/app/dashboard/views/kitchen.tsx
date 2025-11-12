@@ -1,3 +1,4 @@
+
 'use client';
 
 import * as React from 'react';
@@ -91,7 +92,7 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
         setProcessingId(slice.parentTransaction.id + slice.tenantStoreId);
     
         try {
-            if (action === 'complete') {
+            if (action === 'complete') { // Action for Pujasera Admin/Cashier
                 await runTransaction(db, async (transaction) => {
                     const transactionRef = doc(db, 'stores', activeStore.id, 'transactions', slice.parentTransaction.id);
                     transaction.update(transactionRef, { status: 'Selesai' });
@@ -111,8 +112,8 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
     
                 toast({ title: 'Status Diperbarui!', description: `Pesanan untuk ${slice.parentTransaction.customerName} telah ditandai selesai.`});
             
-            } else if (action === 'ready') {
-                // Perform reads BEFORE the transaction
+            } else if (action === 'ready') { // Action for Tenant Kitchen
+                // Find the specific sub-transaction document for the tenant
                 const q = query(
                     collection(db, 'stores', slice.tenantStoreId, 'transactions'),
                     where('parentTransactionId', '==', slice.parentTransaction.id)
@@ -123,15 +124,9 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                     throw new Error(`Sub-transaksi untuk tenant ${slice.tenantStoreName} dengan nota ${slice.parentTransaction.receiptNumber} tidak ditemukan.`);
                 }
                 const subTransactionRef = subTransactionSnapshot.docs[0].ref;
-                const mainTransactionRef = doc(db, 'stores', activeStore.id, 'transactions', slice.parentTransaction.id);
-    
-                await runTransaction(db, async (dbTransaction) => {
-                    // Perform writes inside the transaction
-                    dbTransaction.update(subTransactionRef, { status: 'Siap Diambil' });
-                    dbTransaction.update(mainTransactionRef, {
-                        [`itemsStatus.${slice.tenantStoreId}`]: 'Siap Diambil'
-                    });
-                });
+
+                // We only need to update the sub-transaction. The Cloud Function will handle the rest.
+                await updateDoc(subTransactionRef, { status: 'Siap Diambil' });
     
                 toast({ title: 'Status Diperbarui!', description: `Pesanan dari ${slice.tenantStoreName} telah ditandai siap.` });
             }

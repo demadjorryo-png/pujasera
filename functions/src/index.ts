@@ -207,6 +207,43 @@ export const onPujaseraTransactionCreate = onDocumentCreated("stores/{pujaseraId
 });
 
 /**
+ * NEW FUNCTION
+ * Triggers when a tenant updates their transaction status.
+ * Syncs the "Siap Diambil" status back to the main pujasera transaction.
+ */
+export const onTenantTransactionUpdate = onDocumentUpdated("stores/{tenantId}/transactions/{transactionId}", async (event) => {
+    const before = event.data?.before.data();
+    const after = event.data?.after.data();
+
+    // Ensure this is a status change from 'Diproses' to 'Siap Diambil' for a pujasera sub-transaction
+    if (
+        !before ||
+        !after ||
+        !(before.status === 'Diproses' && after.status === 'Siap Diambil') ||
+        !after.parentTransactionId ||
+        !after.pujaseraId
+    ) {
+        return;
+    }
+
+    const { parentTransactionId, pujaseraId, storeId } = after;
+
+    logger.info(`Tenant ${storeId} marked order for parent tx ${parentTransactionId} as ready. Syncing status.`);
+
+    const mainTransactionRef = db.doc(`stores/${pujaseraId}/transactions/${parentTransactionId}`);
+
+    try {
+        await mainTransactionRef.update({
+            [`itemsStatus.${storeId}`]: 'Siap Diambil'
+        });
+        logger.info(`Successfully synced 'Siap Diambil' status for tenant ${storeId} to main transaction ${parentTransactionId}.`);
+    } catch (error) {
+        logger.error(`Error syncing status for tx ${parentTransactionId}:`, error);
+    }
+});
+
+
+/**
  * Triggers when a new top-up request is created.
  * It syncs the request to the store's subcollection and sends a notification to the admin group.
  */
