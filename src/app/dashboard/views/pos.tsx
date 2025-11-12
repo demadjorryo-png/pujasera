@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import type { Product, Customer, CartItem, Transaction, Table } from '@/lib/types';
+import type { Product, Customer, CartItem, Transaction, Table, Store } from '@/lib/types';
 import {
   Search,
   PlusCircle,
@@ -72,7 +72,7 @@ import { useDashboard } from '@/contexts/dashboard-context';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Switch } from '@/components/ui/switch';
 import type { PointEarningSettings } from '@/lib/types';
-import { getPointEarningSettings } from '@/lib/point-earning-settings';
+import { getPointEarningSettings } from '@/lib/server/point-earning-settings';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 
@@ -478,7 +478,8 @@ export default function POS({ onPrintRequest }: POSProps) {
             subtotal, taxAmount, serviceFeeAmount, discountAmount, totalAmount,
             paymentMethod: finalPaymentMethod,
             status: finalStatus, // Always 'Selesai Dibayar' for the main receipt
-            pointsEarned, pointsRedeemed,
+            pointsEarned, 
+            pointsRedeemed: 0, // pointsRedeemed is not implemented in UI yet
         };
         batch.set(newMainTransactionRef, mainTransactionData);
         batch.update(pujaseraStoreRef, { transactionCounter: increment(1) });
@@ -507,7 +508,8 @@ export default function POS({ onPrintRequest }: POSProps) {
                 totalAmount: tenantSubtotal,
                 paymentMethod: 'Lunas (Pusat)',
                 status: 'Diproses', // This triggers the kitchen view
-                pointsEarned: 0, pointsRedeemed: 0,
+                pointsEarned: 0, 
+                pointsRedeemed: 0,
             };
             batch.set(newTenantTransactionRef, tenantTransactionData);
             batch.update(tenantStoreRef, { transactionCounter: increment(1) });
@@ -861,19 +863,24 @@ export default function POS({ onPrintRequest }: POSProps) {
               )}
               
               <div className="space-y-2 pt-4">
-                {isPujaseraContext && (
-                    <Button 
-                        size="lg" 
-                        className="w-full font-headline text-lg tracking-wider" 
-                        onClick={() => setConfirmationAction({ isPaid: true })}
-                        disabled={isProcessingCheckout || isProductLoading || cart.length === 0}
-                    >
-                        <Share2 className="mr-2 h-5 w-5"/>
-                        Proses & Distribusikan ke Tenant
-                    </Button>
-                )}
-                
-                {!isPujaseraContext && (
+                {isPujaseraContext ? (
+                    <div className="space-y-2">
+                        <div className="grid grid-cols-3 gap-2">
+                            <Button variant={paymentMethod === 'Cash' ? 'default' : 'secondary'} onClick={() => setPaymentMethod('Cash')}>Tunai</Button>
+                            <Button variant={paymentMethod === 'Card' ? 'default' : 'secondary'} onClick={() => setPaymentMethod('Card')}>Kartu</Button>
+                            <Button variant={paymentMethod === 'QRIS' ? 'default' : 'secondary'} onClick={() => setPaymentMethod('QRIS')}>QRIS</Button>
+                        </div>
+                        <Button 
+                            size="lg" 
+                            className="w-full font-headline text-lg tracking-wider" 
+                            onClick={() => setConfirmationAction({ isPaid: true })}
+                            disabled={isProcessingCheckout || isProductLoading || cart.length === 0}
+                        >
+                            <Share2 className="mr-2 h-5 w-5"/>
+                            Proses & Distribusikan ke Tenant
+                        </Button>
+                    </div>
+                ) : (
                     <>
                     <Button 
                         size="lg" 
