@@ -45,20 +45,19 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
         
         const isPujaseraAction = currentUser?.role === 'pujasera_admin' || currentUser?.role === 'pujasera_cashier';
         
-        const txStoreId = isPujaseraAction && transaction.pujaseraGroupSlug ? activeStore.id : transaction.storeId;
+        // For Pujasera users, the transaction is on the main pujasera store document.
+        // For Tenant users, it's on their own store document.
+        const txStoreId = isPujaseraAction ? activeStore.id : transaction.storeId;
         
         try {
-            const transactionRef = doc(db, 'stores', txStoreId, 'transactions', transaction.id);
-            const transactionDoc = await getDoc(transactionRef);
-
-            if (!transactionDoc.exists()) {
-                throw new Error("Transaksi tidak ditemukan.");
-            }
-
             const batch = writeBatch(db);
             let successMessage = '';
 
             if (action === 'complete') {
+                 const transactionRef = doc(db, 'stores', txStoreId, 'transactions', transaction.id);
+                 const transactionDoc = await getDoc(transactionRef);
+                 if (!transactionDoc.exists()) throw new Error("Transaksi tidak ditemukan.");
+
                 batch.update(transactionRef, { status: 'Selesai' });
                 successMessage = `Pesanan untuk ${transaction.customerName} telah ditandai selesai.`;
 
@@ -66,7 +65,11 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                     const tableRef = doc(db, 'stores', txStoreId, 'tables', transaction.tableId);
                     const tableDoc = await getDoc(tableRef);
                     if (tableDoc.exists()) {
-                        batch.update(tableRef, { status: 'Menunggu Dibersihkan' });
+                        if (tableDoc.data()?.isVirtual) {
+                            batch.delete(tableRef);
+                        } else {
+                            batch.update(tableRef, { status: 'Menunggu Dibersihkan', currentOrder: null });
+                        }
                     }
                 }
             } else if (action === 'ready') {
@@ -133,7 +136,7 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                                         <div>
                                             <CardTitle>{order.customerName}</CardTitle>
                                             <CardDescription>
-                                                {formatDistanceToNow(new Date(order.createdAt), { addSuffix: true, locale: idLocale })}
+                                                Nota: {String(order.receiptNumber).padStart(6, '0')} &bull; {formatDistanceToNow(new Date(order.createdAt), { addSuffix: true, locale: idLocale })}
                                             </CardDescription>
                                         </div>
                                         {getStatusBadge(order.status)}
