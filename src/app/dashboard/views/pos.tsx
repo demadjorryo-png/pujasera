@@ -1,4 +1,5 @@
 
+
 'use client';
 
 import * as React from 'react';
@@ -442,7 +443,7 @@ export default function POS({ onPrintRequest }: POSProps) {
             paymentMethod: finalPaymentMethod,
             status: finalStatus,
             pointsEarned, 
-            pointsRedeemed: 0,
+            pointsRedeemed: pointsToRedeem,
             tableId: tableId || undefined,
             pujaseraGroupSlug: activeStore.pujaseraGroupSlug
         };
@@ -802,7 +803,7 @@ export default function POS({ onPrintRequest }: POSProps) {
                             disabled={isProcessingCheckout || isProductLoading || cart.length === 0}
                         >
                             <Share2 className="mr-2 h-5 w-5"/>
-                            Proses & Distribusikan ke Tenant
+                            Proses & Distribusikan
                         </Button>
                     </div>
                 ) : (
@@ -886,3 +887,4 @@ export default function POS({ onPrintRequest }: POSProps) {
     </>
   );
 }
+
