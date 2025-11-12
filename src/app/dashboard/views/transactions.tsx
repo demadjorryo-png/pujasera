@@ -223,19 +223,7 @@ export function TransactionDetailsDialog({
                             Tutup
                         </Button>
                         <div className="flex items-center gap-1">
-                          {transaction.paymentMethod === 'Belum Dibayar' && (
-                              <Button variant="default" size="sm" className="h-8 gap-2" onClick={() => setTransactionToPay(transaction)} disabled={isActionLoading}>
-                                  {isActionLoading ? <Loader className="h-4 w-4 animate-spin"/> : <CreditCard className="h-4 w-4"/>}
-                                  Proses Pembayaran
-                              </Button>
-                          )}
-                          {transaction.status === 'Diproses' && (
-                            <Button variant="outline" size="sm" className="h-8 gap-2" onClick={() => onFollowUpRequest(transaction)} disabled={isActionLoading}>
-                                <Sparkles className="mr-2 h-4 w-4" /> Follow Up Cerdas
-                            </Button>
-                          )}
                            <Button variant="outline" size="sm" className="h-8 gap-2" onClick={() => onPrintRequest(transaction)}><Printer className="mr-2 h-4 w-4"/> Cetak Struk</Button>
-                           <Button variant="destructive" size="sm" className="h-8 gap-2" onClick={() => setTransactionToRefund(transaction)} disabled={!isRefundable}><Undo2 className="mr-2 h-4 w-4"/> Batalkan</Button>
                         </div>
                     </div>
                 </DialogFooter>
