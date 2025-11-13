@@ -85,7 +85,7 @@ export const processPujaseraQueue = onDocumentCreated("Pujaseraqueue/{jobId}", a
 
 
 async function handlePujaseraOrder(payload: any) {
-    const { pujaseraId, customer, cart, subtotal, taxAmount, serviceFeeAmount, totalAmount, paymentMethod, staffId, pointsEarned, pointsRedeemed, tableId, isFromCatalog } = payload;
+    const { pujaseraId, customer, cart, subtotal, taxAmount, serviceFeeAmount, totalAmount, paymentMethod, staffId, pointsEarned, pointsToRedeem, tableId, isFromCatalog } = payload;
     
     if (!pujaseraId || !customer || !cart || cart.length === 0) {
         throw new Error("Data pesanan tidak lengkap.");
@@ -126,7 +126,7 @@ async function handlePujaseraOrder(payload: any) {
         paymentMethod,
         status: 'Diproses',
         pointsEarned: pointsEarned || 0,
-        pointsRedeemed: pointsRedeemed || 0,
+        pointsRedeemed: pointsToRedeem || 0,
         tableId: tableId || undefined,
         pujaseraGroupSlug: pujaseraData.pujaseraGroupSlug,
         notes: isFromCatalog ? 'Pesanan dari Katalog Publik' : '',
