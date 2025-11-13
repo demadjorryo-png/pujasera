@@ -73,7 +73,7 @@ import { useDashboard } from '@/contexts/dashboard-context';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Switch } from '@/components/ui/switch';
 import type { PointEarningSettings } from '@/lib/types';
-import { getPointEarningSettings } from '@/lib/server/point-earning-settings';
+import { getPointEarningSettings } from '@/lib/point-earning-settings';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 
