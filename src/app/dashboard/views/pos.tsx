@@ -446,7 +446,7 @@ export default function POS({ onPrintRequest }: POSProps) {
         paymentMethod: isPaid ? paymentMethod : 'Belum Dibayar',
         staffId: currentUser.id,
         pointsEarned,
-        pointsRedeemed,
+        pointsToRedeem,
         tableId, tableName,
     };
     
@@ -890,5 +890,7 @@ export default function POS({ onPrintRequest }: POSProps) {
     </>
   );
 }
+
+    
 
     
