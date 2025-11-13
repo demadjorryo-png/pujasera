@@ -5,7 +5,6 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as logger from "firebase-functions/logger";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { initializeApp, getApps } from "firebase-admin/app";
-import { getAuth } from "firebase-admin/auth";
 import { subDays } from "date-fns";
 import { format } from "date-fns/format";
 import { id as idLocale } from "date-fns/locale";
@@ -55,10 +54,10 @@ async function internalSendWhatsapp(deviceId: string, target: string, message: s
         });
 
         if (!response.ok) {
-            const responseJson: { status?: string; reason?: string } = await response.json();
+            const responseJson = await response.json() as { status?: string; reason?: string };
             logger.error('WhaCenter API HTTP Error:', { status: response.status, body: responseJson });
         } else {
-            const responseJson: { status?: string; reason?: string } = await response.json();
+            const responseJson = await response.json() as { status?: string; reason?: string };
             if (responseJson.status === 'error') {
                 logger.error('WhaCenter API Error:', responseJson.reason);
             }
@@ -311,10 +310,10 @@ export const onTopUpRequestUpdate = onDocumentUpdated("topUpRequests/{requestId}
   let customerMessage = '';
   let adminMessage = '';
 
-  if (status === 'Disetujui') {
+  if (status === 'completed') {
       customerMessage = `✅ *Top-up Disetujui!*\n\nHalo ${customerName},\nPermintaan top-up Anda untuk toko *${storeName}* telah disetujui.\n\nSejumlah *${formattedAmount} token* telah ditambahkan ke saldo Anda.\n\nTerima kasih!`;
       adminMessage = `✅ *Top-up Disetujui*\n\nPermintaan dari: *${storeName}*\nJumlah: *${formattedAmount} token*\n\nStatus berhasil diperbarui dan saldo toko telah ditambahkan.`;
-  } else if (status === 'Ditolak') {
+  } else if (status === 'rejected') {
       customerMessage = `❌ *Top-up Ditolak*\n\nHalo ${customerName},\nMohon maaf, permintaan top-up Anda untuk toko *${storeName}* sejumlah ${formattedAmount} token telah ditolak.\n\nSilakan periksa bukti transfer Anda dan coba lagi, atau hubungi admin jika ada pertanyaan.`;
       adminMessage = `❌ *Top-up Ditolak*\n\nPermintaan dari: *${storeName}*\nJumlah: *${formattedAmount} token*\n\nStatus berhasil diperbarui. Tidak ada perubahan pada saldo toko.`;
   } else {
@@ -419,6 +418,3 @@ export const sendDailySalesSummary = onSchedule({
         logger.error("Error dalam fungsi terjadwal sendDailySalesSummary:", error);
     }
 });
-
-
-
