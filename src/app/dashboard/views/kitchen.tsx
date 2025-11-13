@@ -1,4 +1,3 @@
-
 'use client';
 
 import * as React from 'react';
@@ -11,7 +10,7 @@ import { id as idLocale } from 'date-fns/locale';
 import { Button } from '@/components/ui/button';
 import { CheckCircle, ChefHat, Loader, MessageSquare, Printer, Send, Store } from 'lucide-react';
 import { doc, writeBatch, getDoc, collection, query, where, getDocs, updateDoc, runTransaction } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { db, auth } from '@/lib/firebase';
 import { useAuth } from '@/contexts/auth-context';
 import { Badge } from '@/components/ui/badge';
 import type { Transaction, TransactionStatus, CartItem } from '@/lib/types';
@@ -26,7 +25,6 @@ type KitchenProps = {
 // This represents a "view" of an order for a specific tenant
 type TenantOrderSlice = {
     parentTransaction: Transaction;
-    subTransactionId?: string; // The ID of the tenant's own transaction document
     tenantStoreId: string;
     tenantStoreName: string;
     items: CartItem[];
@@ -46,11 +44,10 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
     const tenantOrderSlices = React.useMemo(() => {
         const activeTransactions = transactions.filter(t => t.status === 'Diproses' || t.status === 'Siap Diambil');
 
+        // For regular tenants, their transactions are their slices, but only if they are part of a pujasera order
         if (!isPujaseraUser) {
-            // For regular tenants, their transactions are their slices
-            return activeTransactions.filter(t => t.storeId === activeStore?.id).map(tx => ({
+            return activeTransactions.filter(t => t.storeId === activeStore?.id && t.pujaseraId).map(tx => ({
                 parentTransaction: tx,
-                subTransactionId: tx.id,
                 tenantStoreId: tx.storeId,
                 tenantStoreName: activeStore?.name || 'Toko Anda',
                 items: tx.items,
@@ -62,8 +59,10 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
         const slices: TenantOrderSlice[] = [];
         activeTransactions.forEach(tx => {
             const itemsByTenant = tx.items.reduce((acc, item) => {
-                const storeId = item.storeId || 'unknown';
-                const storeName = item.storeName || 'Tenant Tidak Diketahui';
+                const storeId = item.storeId;
+                if (!storeId) return acc;
+                
+                const storeName = item.storeName || 'Tenant';
                 if (!acc[storeId]) {
                     acc[storeId] = { storeName, items: [] };
                 }
@@ -113,21 +112,25 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                 toast({ title: 'Status Diperbarui!', description: `Pesanan untuk ${slice.parentTransaction.customerName} telah ditandai selesai.` });
 
             } else if (action === 'ready') { // Action for Tenant Kitchen
-                const q = query(
-                    collection(db, 'stores', slice.tenantStoreId, 'transactions'),
-                    where('parentTransactionId', '==', slice.parentTransaction.id)
-                );
+                const idToken = await auth.currentUser?.getIdToken(true);
+                const response = await fetch('/api/kitchen/update-status', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${idToken}`,
+                    },
+                    body: JSON.stringify({
+                        tenantId: slice.tenantStoreId,
+                        pujaseraId: slice.parentTransaction.pujaseraId,
+                        parentTransactionId: slice.parentTransaction.id,
+                    }),
+                });
 
-                const subTransactionSnapshot = await getDocs(q);
-
-                if (subTransactionSnapshot.empty) {
-                    throw new Error(`Sub-transaksi untuk tenant ${slice.tenantStoreName} dengan nota ${slice.parentTransaction.receiptNumber} tidak ditemukan.`);
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Gagal memperbarui status pesanan.');
                 }
-                const subTransactionRef = subTransactionSnapshot.docs[0].ref;
-
-                // The Cloud Function will handle syncing this status back to the parent transaction.
-                await updateDoc(subTransactionRef, { status: 'Siap Diambil' });
-
+                
                 toast({ title: 'Status Diperbarui!', description: `Pesanan dari ${slice.tenantStoreName} telah ditandai siap.` });
             }
 
