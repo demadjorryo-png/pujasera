@@ -1,49 +1,8 @@
 
+'use server';
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getFirebaseAdmin } from '@/lib/server/firebase-admin';
-import { getWhatsappSettings } from '@/lib/server/whatsapp-settings';
-
-// Helper function to send WhatsApp message directly
-async function internalSendWhatsapp(deviceId: string, target: string, message: string, isGroup: boolean = false) {
-    const formData = new FormData();
-    formData.append('device_id', deviceId);
-    formData.append(isGroup ? 'group' : 'number', target);
-    formData.append('message', message);
-    const endpoint = isGroup ? 'sendGroup' : 'send';
-    const webhookUrl = `https://app.whacenter.com/api/${endpoint}`;
-
-    try {
-        const response = await fetch(webhookUrl, {
-            method: 'POST',
-            body: formData,
-        });
-
-        if (!response.ok) {
-            const responseJson = await response.json();
-            console.error('WhaCenter API HTTP Error:', { status: response.status, body: responseJson });
-        } else {
-            const responseJson = await response.json();
-            if (responseJson.status === 'error') {
-                console.error('WhaCenter API Error:', responseJson.reason);
-            }
-        }
-    } catch (error) {
-        console.error("Failed to send WhatsApp message:", error);
-    }
-}
-
-// Helper function to format phone number
-function formatWhatsappNumber(nomor: string | number): string {
-    if (!nomor) return '';
-    let nomorStr = String(nomor).replace(/\D/g, '');
-    if (nomorStr.startsWith('0')) {
-        return '62' + nomorStr.substring(1);
-    }
-    if (nomorStr.startsWith('8')) {
-        return '62' + nomorStr;
-    }
-    return nomorStr;
-}
 
 export async function POST(req: NextRequest) {
     const { auth, db } = getFirebaseAdmin();

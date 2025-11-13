@@ -41,6 +41,47 @@ function getWhatsappSettings(): WhatsappSettings {
   return { deviceId, adminGroup };
 }
 
+async function internalSendWhatsapp(deviceId: string, target: string, message: string, isGroup: boolean = false) {
+    const formData = new FormData();
+    formData.append('device_id', deviceId);
+    formData.append(isGroup ? 'group' : 'number', target);
+    formData.append('message', message);
+    const endpoint = isGroup ? 'sendGroup' : 'send';
+    const webhookUrl = `https://app.whacenter.com/api/${endpoint}`;
+
+    try {
+        const fetch = (await import('node-fetch')).default;
+        const response = await fetch(webhookUrl, {
+            method: 'POST',
+            body: formData,
+        });
+
+        if (!response.ok) {
+            const responseJson = await response.json();
+            logger.error('WhaCenter API HTTP Error:', { status: response.status, body: responseJson });
+        } else {
+            const responseJson = await response.json();
+            if (responseJson.status === 'error') {
+                logger.error('WhaCenter API Error:', responseJson.reason);
+            }
+        }
+    } catch (error) {
+        logger.error("Failed to send WhatsApp message:", error);
+    }
+}
+
+function formatWhatsappNumber(nomor: string | number): string {
+    if (!nomor) return '';
+    let nomorStr = String(nomor).replace(/\D/g, '');
+    if (nomorStr.startsWith('0')) {
+        return '62' + nomorStr.substring(1);
+    }
+    if (nomorStr.startsWith('8')) {
+        return '62' + nomorStr;
+    }
+    return nomorStr;
+}
+
 /**
  * Main function to handle all queued tasks.
  * It now orchestrates order processing, distribution, and WhatsApp notifications.
@@ -253,28 +294,24 @@ export const onTopUpRequestCreate = onDocumentCreated("topUpRequests/{requestId}
         logger.error("Top-up request is missing 'storeId' or 'storeName'.", { id: snapshot.id });
         return;
     }
-    
-    const whatsappQueueRef = db.collection('Pujaseraqueue');
 
     try {
+        // 1. Sync data to the store's subcollection for their history
         const historyRef = db.collection('stores').doc(storeId).collection('topUpRequests').doc(snapshot.id);
         await historyRef.set(requestData);
         logger.info(`Synced top-up request ${snapshot.id} to store ${storeId}`);
 
-        const formattedAmount = (tokensToAdd || 0).toLocaleString('id-ID');
-        const adminMessage = `🔔 *Permintaan Top-up Baru*\n\nToko: *${storeName}*\nPengaju: *${userName || 'N/A'}*\nJumlah: *${formattedAmount} token*\n\nMohon segera verifikasi di panel admin.\nBukti: ${proofUrl || 'Tidak ada'}`;
-        
-        await whatsappQueueRef.add({
-            type: 'whatsapp-notification',
-            payload: {
-                to: 'admin_group',
-                message: adminMessage,
-                isGroup: true,
-            },
-            createdAt: FieldValue.serverTimestamp(),
-        });
-        logger.info(`Queued new top-up request notification for platform admin.`);
-
+        // 2. Send notification directly to admin group
+        const { deviceId, adminGroup } = getWhatsappSettings();
+        if (deviceId && adminGroup) {
+            const formattedAmount = (tokensToAdd || 0).toLocaleString('id-ID');
+            const adminMessage = `🔔 *Permintaan Top-up Baru*\n\nToko: *${storeName}*\nPengaju: *${userName || 'N/A'}*\nJumlah: *${formattedAmount} token*\n\nMohon segera verifikasi di panel admin.\nBukti: ${proofUrl || 'Tidak ada'}`;
+            
+            await internalSendWhatsapp(deviceId, adminGroup, adminMessage, true);
+            logger.info(`Sent new top-up request notification for platform admin.`);
+        } else {
+            logger.warn("Admin WhatsApp notification for new top-up skipped: deviceId or adminGroup not configured.");
+        }
     } catch (error) {
         logger.error(`Failed to process new top-up request ${snapshot.id} for store ${storeId}:`, error);
     }
@@ -305,8 +342,13 @@ export const onTopUpRequestUpdate = onDocumentUpdated("topUpRequests/{requestId}
     logger.error(`Request ${requestId} is missing 'storeId' or 'storeName'. Cannot process update.`);
     return;
   }
+  
+  const { deviceId, adminGroup } = getWhatsappSettings();
+  if (!deviceId) {
+      logger.error("WhatsApp Device ID not configured. Cannot send top-up update notifications.");
+      return;
+  }
 
-  const whatsappQueueRef = db.collection('Pujaseraqueue');
   const formattedAmount = (tokensToAdd || 0).toLocaleString('id-ID');
   
   let customerWhatsapp = '';
@@ -338,35 +380,23 @@ export const onTopUpRequestUpdate = onDocumentUpdated("topUpRequests/{requestId}
   }
 
   try {
+      // Notify customer directly
       if (customerWhatsapp) {
-          const formattedPhone = customerWhatsapp.startsWith('0') ? `62${customerWhatsapp.substring(1)}` : customerWhatsapp;
-          await whatsappQueueRef.add({
-              type: 'whatsapp-notification',
-              payload: {
-                  to: formattedPhone,
-                  message: customerMessage,
-                  isGroup: false,
-              },
-              createdAt: FieldValue.serverTimestamp(),
-          });
-          logger.info(`Queued '${status}' notification for customer ${customerName} of store ${storeId}`);
+          const formattedPhone = formatWhatsappNumber(customerWhatsapp);
+          await internalSendWhatsapp(deviceId, formattedPhone, customerMessage, false);
+          logger.info(`Sent '${status}' notification for customer ${customerName} of store ${storeId}`);
       } else {
           logger.warn(`User ${userId} for store ${storeId} does not have a WhatsApp number. Cannot send notification.`);
       }
       
-      await whatsappQueueRef.add({
-          type: 'whatsapp-notification',
-          payload: {
-              to: 'admin_group',
-              message: adminMessage,
-              isGroup: true,
-          },
-          createdAt: FieldValue.serverTimestamp(),
-      });
-      logger.info(`Queued '${status}' notification for admin group for request from ${storeName}.`);
+      // Notify admin group directly
+      if (adminGroup) {
+          await internalSendWhatsapp(deviceId, adminGroup, adminMessage, true);
+          logger.info(`Sent '${status}' notification for admin group for request from ${storeName}.`);
+      }
 
   } catch (error) {
-      logger.error(`Failed to queue notifications for request ${requestId}:`, error);
+      logger.error(`Failed to send notifications for request ${requestId}:`, error);
   }
 });
 
