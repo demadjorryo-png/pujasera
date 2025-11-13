@@ -3,7 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getFirebaseAdmin } from '@/lib/server/firebase-admin';
-import { collection, doc, runTransaction, query, where, getDocs, collectionGroup } from 'firebase-admin/firestore';
+import { doc, query, where, collectionGroup } from 'firebase-admin/firestore';
 
 export async function POST(req: NextRequest) {
   const { auth, db } = getFirebaseAdmin();
@@ -21,9 +21,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing required IDs' }, { status: 400 });
     }
     
-    await runTransaction(db, async (transaction) => {
+    await db.runTransaction(async (transaction) => {
         // 1. Find the sub-transaction document for the tenant using a collection group query.
-        // This is more robust as it searches across all 'transactions' sub-collections.
         const subTransactionQuery = query(
             collectionGroup(db, 'transactions'), 
             where('parentTransactionId', '==', parentTransactionId),
