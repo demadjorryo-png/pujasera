@@ -5,6 +5,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as logger from "firebase-functions/logger";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { initializeApp, getApps } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
 import { subDays } from "date-fns";
 import { format } from "date-fns/format";
 import { id as idLocale } from "date-fns/locale";
@@ -15,7 +16,6 @@ if (getApps().length === 0) {
     initializeApp();
 }
 const db = getFirestore();
-
 
 interface WhatsappSettings {
   deviceId?: string;
@@ -55,10 +55,10 @@ async function internalSendWhatsapp(deviceId: string, target: string, message: s
         });
 
         if (!response.ok) {
-            const responseJson = await response.json() as { status?: string; reason?: string };
+            const responseJson: { status?: string; reason?: string } = await response.json();
             logger.error('WhaCenter API HTTP Error:', { status: response.status, body: responseJson });
         } else {
-            const responseJson = await response.json() as { status?: string; reason?: string };
+            const responseJson: { status?: string; reason?: string } = await response.json();
             if (responseJson.status === 'error') {
                 logger.error('WhaCenter API Error:', responseJson.reason);
             }
@@ -100,10 +100,6 @@ export const processPujaseraQueue = onDocumentCreated("Pujaseraqueue/{jobId}", a
             case 'pujasera-order':
                 await handlePujaseraOrder(payload);
                 await snapshot.ref.update({ status: 'completed', processedAt: FieldValue.serverTimestamp() });
-                break;
-            case 'whatsapp-notification':
-                await handleWhatsappNotification(payload);
-                await snapshot.ref.update({ status: 'sent', processedAt: FieldValue.serverTimestamp() });
                 break;
             default:
                 logger.warn(`Unknown job type: ${type}`);
@@ -233,50 +229,10 @@ async function handlePujaseraOrder(payload: any) {
 }
 
 
-async function handleWhatsappNotification(payload: any) {
-    const { to, message, isGroup = false } = payload;
-
-    if (!to || !message) {
-        throw new Error("Payload is missing 'to' or 'message' field.");
-    }
-
-    const { deviceId, adminGroup } = getWhatsappSettings();
-    if (!deviceId) {
-        throw new Error("WhatsApp deviceId is not configured in environment variables.");
-    }
-
-    const recipient = (to === 'admin_group' && isGroup) ? adminGroup : to;
-    if (!recipient) {
-        throw new Error(`Recipient is invalid. 'to' field was '${to}' and adminGroup is not set.`);
-    }
-
-    const fetch = (await import('node-fetch')).default;
-    const body = new URLSearchParams();
-    body.append('device_id', deviceId);
-    body.append(isGroup ? 'group' : 'number', recipient);
-    body.append('message', message);
-
-    const endpoint = isGroup ? 'sendGroup' : 'send';
-    const webhookUrl = `https://app.whacenter.com/api/${endpoint}`;
-
-    const response = await fetch(webhookUrl, {
-        method: 'POST',
-        body: body,
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-    });
-    
-    const responseJson = await response.json() as { status: 'error' | 'success', reason?: string };
-
-    if (!response.ok || responseJson.status === 'error') {
-        throw new Error(responseJson.reason || `WhaCenter API error with status ${response.status}`);
-    }
-
-    logger.info(`Successfully sent WhatsApp message via queue to ${recipient}`);
-}
-
 /**
  * Triggers when a new top-up request is created.
- * It syncs the request to the store's subcollection and sends a notification to the admin group.
+ * It syncs the request to the store's subcollection for history.
+ * The notification is now handled by the API route.
  */
 export const onTopUpRequestCreate = onDocumentCreated("topUpRequests/{requestId}", async (event) => {
     const snapshot = event.data;
@@ -286,39 +242,27 @@ export const onTopUpRequestCreate = onDocumentCreated("topUpRequests/{requestId}
     }
 
     const requestData = snapshot.data();
-    const { storeId, storeName, tokensToAdd, proofUrl, userName } = requestData;
+    const { storeId } = requestData;
 
-    if (!storeId || !storeName) {
-        logger.error("Top-up request is missing 'storeId' or 'storeName'.", { id: snapshot.id });
+    if (!storeId) {
+        logger.error("Top-up request is missing 'storeId'.", { id: snapshot.id });
         return;
     }
 
     try {
-        // 1. Sync data to the store's subcollection for their history
+        // Sync data to the store's subcollection for their history
         const historyRef = db.collection('stores').doc(storeId).collection('topUpRequests').doc(snapshot.id);
         await historyRef.set(requestData);
         logger.info(`Synced top-up request ${snapshot.id} to store ${storeId}`);
-
-        // 2. Send notification directly to admin group
-        const { deviceId, adminGroup } = getWhatsappSettings();
-        if (deviceId && adminGroup) {
-            const formattedAmount = (tokensToAdd || 0).toLocaleString('id-ID');
-            const adminMessage = `🔔 *Permintaan Top-up Baru*\n\nToko: *${storeName}*\nPengaju: *${userName || 'N/A'}*\nJumlah: *${formattedAmount} token*\n\nMohon segera verifikasi di panel admin.\nBukti: ${proofUrl || 'Tidak ada'}`;
-            
-            await internalSendWhatsapp(deviceId, adminGroup, adminMessage, true);
-            logger.info(`Sent new top-up request notification for platform admin.`);
-        } else {
-            logger.warn("Admin WhatsApp notification for new top-up skipped: deviceId or adminGroup not configured.");
-        }
     } catch (error) {
-        logger.error(`Failed to process new top-up request ${snapshot.id} for store ${storeId}:`, error);
+        logger.error(`Failed to sync new top-up request ${snapshot.id} for store ${storeId}:`, error);
     }
 });
 
 
 /**
  * Handles logic when a top-up request is updated (approved/rejected).
- * Sends notifications to the customer and admin group via whatsappQueue.
+ * Sends notifications to the customer and admin group.
  */
 export const onTopUpRequestUpdate = onDocumentUpdated("topUpRequests/{requestId}", async (event) => {
   const before = event.data?.before.data();
@@ -411,6 +355,12 @@ export const sendDailySalesSummary = onSchedule({
             return;
         }
 
+        const { deviceId } = getWhatsappSettings();
+        if (!deviceId) {
+            logger.error("WhatsApp Device ID not configured. Cannot send daily summaries.");
+            return;
+        }
+
         const promises = storesSnapshot.docs.map(async (storeDoc) => {
             const store = storeDoc.data();
             const storeId = storeDoc.id;
@@ -455,18 +405,10 @@ export const sendDailySalesSummary = onSchedule({
                     const adminData = adminDoc.data();
                     if (adminData && adminData.whatsapp) {
                         const message = `*Ringkasan Harian Chika POS*\n*${store.name}* - ${formattedDate}\n\nHalo *${adminData.name}*, berikut adalah ringkasan penjualan Anda kemarin:\n- *Total Omset*: Rp ${totalRevenue.toLocaleString('id-ID')}\n- *Jumlah Transaksi*: ${totalTransactions}\n\nTerus pantau dan optimalkan performa penjualan Anda melalui dasbor Chika. Semangat selalu! 💪\n\n_Apabila tidak berkenan, fitur ini dapat dinonaktifkan di menu Pengaturan._`;
-
-                        await db.collection('Pujaseraqueue').add({
-                            type: 'whatsapp-notification',
-                            payload: {
-                                to: adminData.whatsapp,
-                                message: message,
-                                isGroup: false,
-                                storeId: storeId,
-                            },
-                            createdAt: FieldValue.serverTimestamp(),
-                        });
-                        logger.info(`Laporan harian berhasil diantrikan untuk ${adminData.name} (${store.name})`);
+                        
+                        const formattedPhone = formatWhatsappNumber(adminData.whatsapp);
+                        await internalSendWhatsapp(deviceId, formattedPhone, message, false);
+                        logger.info(`Laporan harian berhasil dikirim untuk ${adminData.name} (${store.name})`);
                     }
                 }
             }
@@ -477,5 +419,3 @@ export const sendDailySalesSummary = onSchedule({
         logger.error("Error dalam fungsi terjadwal sendDailySalesSummary:", error);
     }
 });
-
-    
