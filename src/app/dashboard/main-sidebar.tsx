@@ -97,7 +97,7 @@ export function MainSidebar({ pradanaTokenBalance }: MainSidebarProps) {
     // --- PUJASERA GROUPS ---
     {
         group: 'Operasional Pujasera',
-        icon: <Building />,
+        icon: <Store />,
         roles: ['pujasera_admin', 'pujasera_cashier'],
         items: [
             { view: 'pujasera-overview', label: 'Overview Pujasera', icon: <LayoutGrid />, roles: ['pujasera_admin'], tourId: 'sidebar-overview' },
