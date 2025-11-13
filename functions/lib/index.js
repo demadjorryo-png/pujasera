@@ -1,3 +1,4 @@
+
 'use server';
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
@@ -77,6 +78,7 @@ exports.processPujaseraQueue = (0, firestore_1.onDocumentCreated)("Pujaseraqueue
     const jobData = snapshot.data();
     const { type, payload } = jobData;
     try {
+        await snapshot.ref.update({ status: 'processing', startedAt: firestore_2.FieldValue.serverTimestamp() });
         switch (type) {
             case 'pujasera-order':
                 await handlePujaseraOrder(payload);
@@ -96,7 +98,7 @@ exports.processPujaseraQueue = (0, firestore_1.onDocumentCreated)("Pujaseraqueue
                 break;
             default:
                 logger.warn(`Unknown job type: ${type}`);
-                await snapshot.ref.update({ status: 'unknown_type', error: `Unknown job type: ${type}` });
+                await snapshot.ref.update({ status: 'unknown_type', error: `Unknown job type: ${type}`, processedAt: firestore_2.FieldValue.serverTimestamp() });
         }
     }
     catch (error) {
@@ -243,19 +245,25 @@ async function handleWhatsappNotification(payload) {
 }
 async function handlePujaseraRegistration(payload) {
     const { pujaseraName, pujaseraLocation, adminName, email, whatsapp, password, referralCode } = payload;
+    logger.info(`Starting registration for pujasera: ${pujaseraName}`);
     let newUser = null;
     try {
         const feeSettingsDoc = await db.doc('appSettings/transactionFees').get();
         const feeSettings = feeSettingsDoc.data() || {};
         const bonusTokens = feeSettings.newPujaseraBonusTokens || 0;
+        logger.info(`Bonus tokens to be awarded: ${bonusTokens}`);
+        logger.info(`Creating user in Firebase Auth for email: ${email}`);
         const userRecord = await adminAuth.createUser({ email, password, displayName: adminName });
         newUser = userRecord;
         const uid = newUser.uid;
+        logger.info(`User created with UID: ${uid}`);
         const pujaseraGroupSlug = pujaseraName.toLowerCase().replace(/\s+/g, '-').replace(/[^\w\-]+/g, '').replace(/\-\-+/g, '-').replace(/^-+/, '').replace(/-+$/, '') + '-' + Math.random().toString(36).substring(2, 7);
         const primaryStoreIdForAdmin = uid;
+        logger.info(`Setting custom claims for user ${uid}: role=pujasera_admin, pujaseraGroupSlug=${pujaseraGroupSlug}`);
         await adminAuth.setCustomUserClaims(uid, { role: 'pujasera_admin', pujaseraGroupSlug });
         const batch = db.batch();
         const storeRef = db.collection('stores').doc(primaryStoreIdForAdmin);
+        logger.info(`Preparing to create store document for ${pujaseraName} at stores/${primaryStoreIdForAdmin}`);
         batch.set(storeRef, {
             name: pujaseraName,
             location: pujaseraLocation,
@@ -272,6 +280,7 @@ async function handlePujaseraRegistration(payload) {
             isPosEnabled: true,
         });
         const userRef = db.collection('users').doc(uid);
+        logger.info(`Preparing to create user document for ${adminName} at users/${uid}`);
         batch.set(userRef, {
             name: adminName,
             email,
@@ -281,6 +290,7 @@ async function handlePujaseraRegistration(payload) {
             storeId: primaryStoreIdForAdmin,
             pujaseraGroupSlug,
         });
+        logger.info("Committing batch write to Firestore...");
         await batch.commit();
         logger.info(`New pujasera group and admin created for ${email}`);
         // Enqueue notifications
@@ -289,12 +299,14 @@ async function handlePujaseraRegistration(payload) {
         const queueRef = db.collection('Pujaseraqueue');
         await queueRef.add({ type: 'whatsapp-notification', payload: { to: whatsapp, message: welcomeMessage } });
         await queueRef.add({ type: 'whatsapp-notification', payload: { to: 'admin_group', message: adminMessage, isGroup: true } });
+        logger.info("Enqueued welcome and admin notifications.");
     }
     catch (error) {
+        logger.error('Error in handlePujaseraRegistration:', error);
         if (newUser) {
+            logger.warn(`Attempting to clean up orphaned user ${newUser === null || newUser === void 0 ? void 0 : newUser.uid}`);
             await adminAuth.deleteUser(newUser.uid).catch(delErr => logger.error(`Failed to clean up orphaned user ${newUser === null || newUser === void 0 ? void 0 : newUser.uid}`, delErr));
         }
-        logger.error('Error in handlePujaseraRegistration:', error);
         throw error; // Re-throw to be caught by the main handler
     }
 }

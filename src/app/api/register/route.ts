@@ -1,7 +1,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getFirebaseAdmin } from '@/lib/server/firebase-admin';
-import { FieldValue } from 'firebase-admin/firestore';
 
 export async function POST(req: NextRequest) {
   const { db } = getFirebaseAdmin();
@@ -34,7 +33,6 @@ export async function POST(req: NextRequest) {
         password,
         referralCode,
       },
-      // The createdAt timestamp will be added by the Cloud Function
     });
 
     console.info(`Queued new pujasera registration for ${email}`);
