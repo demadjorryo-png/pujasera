@@ -97,13 +97,13 @@ export function MainSidebar({ pradanaTokenBalance }: MainSidebarProps) {
     // --- PUJASERA GROUPS ---
     {
         group: 'Operasional Pujasera',
-        icon: <Briefcase />,
+        icon: <Building />,
         roles: ['pujasera_admin', 'pujasera_cashier'],
         items: [
             { view: 'pujasera-overview', label: 'Overview Pujasera', icon: <LayoutGrid />, roles: ['pujasera_admin'], tourId: 'sidebar-overview' },
             { view: 'pujasera-pos', label: 'Kasir Pujasera', icon: <Armchair />, roles: ['pujasera_cashier', 'pujasera_admin'], tourId: 'sidebar-pos' },
             { view: 'transactions', label: 'Transaksi', icon: <History />, roles: ['pujasera_admin', 'pujasera_cashier'], tourId: 'sidebar-transactions' },
-            { view: 'kitchen', label: 'Dapur Terpusat', icon: <ChefHat />, roles: ['pujasera_admin', 'pujasera_cashier'], tourId: 'sidebar-kitchen' },
+            { view: 'kitchen', label: 'Dapur Terpusat', icon: <Briefcase />, roles: ['pujasera_admin', 'pujasera_cashier'], tourId: 'sidebar-kitchen' },
         ]
     },
     {
