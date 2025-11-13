@@ -1,4 +1,4 @@
-'use client';
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getFirebaseAdmin } from '@/lib/server/firebase-admin';
 import type { OrderPayload, Table, TableOrder, Transaction } from '@/lib/types';
@@ -16,15 +16,19 @@ export async function POST(req: NextRequest) {
 
         const pujaseraStoreRef = db.collection('stores').doc(pujaseraId);
         
-        // --- START: New Hybrid Logic ---
+        // --- START: Fix for Transaction Error ---
+        // 1. Read the document FIRST, outside the transaction.
+        const pujaseraStoreDoc = await pujaseraStoreRef.get();
+        if (!pujaseraStoreDoc.exists) {
+            throw new Error("Pujasera tidak ditemukan.");
+        }
+
+        // 2. Now, run the transaction with only WRITE operations.
         const result = await db.runTransaction(async (transaction) => {
-            const pujaseraStoreDoc = await transaction.get(pujaseraStoreRef);
-            if (!pujaseraStoreDoc.exists) {
-                throw new Error("Pujasera tidak ditemukan.");
-            }
+            const pujaseraData = pujaseraStoreDoc.data()!;
             
-            // 1. Create the main transaction record immediately
-            const pujaseraCounter = pujaseraStoreDoc.data()?.transactionCounter || 0;
+            // Create the main transaction record immediately
+            const pujaseraCounter = pujaseraData.transactionCounter || 0;
             const newReceiptNumber = pujaseraCounter + 1;
             
             const newTransactionData: Omit<Transaction, 'id'> = {
@@ -41,7 +45,7 @@ export async function POST(req: NextRequest) {
                 status: 'Diproses', // Directly set to 'Diproses' to trigger kitchen function
                 pointsEarned: 0, 
                 pointsRedeemed: 0,
-                pujaseraGroupSlug: pujaseraStoreDoc.data()?.pujaseraGroupSlug,
+                pujaseraGroupSlug: pujaseraData.pujaseraGroupSlug,
                 notes: 'Pesanan dari Katalog Publik'
             };
 
@@ -51,9 +55,9 @@ export async function POST(req: NextRequest) {
             // Increment the transaction counter
             transaction.update(pujaseraStoreRef, { transactionCounter: FieldValue.increment(1) });
 
-            // 2. If payment is at the cashier, create a virtual table as a marker
+            // If payment is at the cashier, create a virtual table as a marker
             if (paymentMethod === 'kasir') {
-                const virtualTableCounter = pujaseraStoreDoc.data()?.virtualTableCounter || 0;
+                const virtualTableCounter = pujaseraData.virtualTableCounter || 0;
                 const virtualTableName = `WEB-${virtualTableCounter + 1}`;
                 
                 const newTableRef = db.collection('stores').doc(pujaseraId).collection('tables').doc();
@@ -81,14 +85,15 @@ export async function POST(req: NextRequest) {
             return {
                 success: true,
                 transactionId: newTxRef.id,
-                receiptNumber: newReceiptNumber
+                receiptNumber: newReceiptNumber,
+                tableCreated: paymentMethod === 'kasir',
             };
         });
-        // --- END: New Hybrid Logic ---
+        // --- END: Fix for Transaction Error ---
 
-        const message = paymentMethod === 'qris'
-            ? `Pesanan #${result.receiptNumber} berhasil dibuat. Silakan selesaikan pembayaran dan pesanan akan segera diproses.`
-            : `Pesanan #${result.receiptNumber} berhasil dibuat dan akan diproses. Silakan bayar di kasir.`;
+        const message = result.tableCreated
+            ? `Pesanan #${result.receiptNumber} berhasil dibuat dan akan diproses. Silakan bayar di kasir.`
+            : `Pesanan #${result.receiptNumber} berhasil dibuat. Silakan selesaikan pembayaran dan pesanan akan segera diproses.`;
 
         return NextResponse.json({ 
             success: true, 
