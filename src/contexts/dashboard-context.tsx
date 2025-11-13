@@ -1,4 +1,3 @@
-
 'use client';
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode, useRef } from 'react';
 import { db } from '@/lib/firebase';
@@ -24,8 +23,6 @@ const defaultFeeSettings: TransactionFeeSettings = {
   catalogMonthlyFee: 250,
   catalogSixMonthFee: 1400,
   catalogYearlyFee: 2500,
-  taxPercentage: 0,
-  serviceFeePercentage: 0,
 };
 
 interface DashboardContextType {
@@ -141,7 +138,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         setCustomers(customersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer)));
         setRedemptionOptions(redemptionOptionsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as RedemptionOption)));
         setChallengePeriods(challengePeriodsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ChallengePeriod)));
-        setFeeSettings(feeSettingsData);
+        setFeeSettings(feeSettingsData as TransactionFeeSettings);
         
         if (activeStore) {
             refreshPradanaTokenBalance();
@@ -199,7 +196,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
             
             let isInitialLoad = true;
             
-            const targetStoreId = isPujaseraUser ? storeId : storeId;
+            const targetStoreId = storeId;
 
             const transactionsQuery = query(collection(db, 'stores', targetStoreId, 'transactions'), orderBy('createdAt', 'desc'));
             const unsubscribe = onSnapshot(transactionsQuery, (snapshot) => {
@@ -211,9 +208,14 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
                         if (change.type === "added") {
                             const docData = change.doc.data() as Transaction;
                             if (docData.status === 'Diproses' && !notifiedTransactionsRef.current.has(change.doc.id)) {
+                                const isCatalogOrder = docData.notes === 'Pesanan dari Katalog Publik';
+                                const notificationTitle = isCatalogOrder
+                                  ? `🔔 Pesanan Online Baru (Nota #${String(docData.receiptNumber).padStart(6, '0')})`
+                                  : `🔔 Pesanan Baru (Nota #${String(docData.receiptNumber).padStart(6, '0')})`;
+                                
                                 setTimeout(() => {
                                     toast({
-                                        title: `🔔 Pesanan Baru (Nota #${String(docData.receiptNumber).padStart(6, '0')})`,
+                                        title: notificationTitle,
                                         description: `Ada pesanan baru untuk pelanggan ${docData.customerName}.`,
                                     });
                                     playNotificationSound();
@@ -253,7 +255,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     return () => {
         unsubscribes.forEach(unsub => unsub());
     };
-  }, [isAuthLoading, currentUser, activeStore, refreshData, toast, playNotificationSound, pujaseraTenants]);
+  }, [isAuthLoading, currentUser, activeStore, refreshData, toast, playNotificationSound]);
 
   const value = {
     dashboardData: {

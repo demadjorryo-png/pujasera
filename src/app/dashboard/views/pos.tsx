@@ -66,7 +66,7 @@ import { cn } from '@/lib/utils';
 import { Label } from '@/components/ui/label';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { db, auth } from '@/lib/firebase';
-import { collection, doc, runTransaction, increment, serverTimestamp, getDoc, deleteDoc, getDocs, query, where, addDoc, writeBatch } from 'firebase/firestore';
+import { collection, doc, serverTimestamp, getDoc, deleteDoc, getDocs, query, where, addDoc, writeBatch } from 'firebase/firestore';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth } from '@/contexts/auth-context';
 import { useDashboard } from '@/contexts/dashboard-context';
@@ -120,7 +120,7 @@ function NoteDialog({ open, onOpenChange, note, onSave }: { open: boolean, onOpe
 }
 
 export default function POS({ onPrintRequest }: POSProps) {
-  const { currentUser, activeStore, pradanaTokenBalance, refreshPradanaTokenBalance, pujaseraTenants } = useAuth();
+  const { currentUser, activeStore, pradanaTokenBalance } = useAuth();
   const { dashboardData, isLoading: isDashboardLoading, refreshData } = useDashboard();
   const { customers, tables, feeSettings } = dashboardData;
   const router = useRouter();
@@ -205,8 +205,29 @@ export default function POS({ onPrintRequest }: POSProps) {
   React.useEffect(() => {
     if (tableId && tables.length > 0 && products.length > 0) {
         const table = tables.find(t => t.id === tableId);
-        if (table?.currentOrder) {
-            const reconstructedCart: CartItem[] = table.currentOrder.items.map(orderItem => {
+        if (table?.currentOrder?.transactionId) {
+            // This is a catalog order waiting for payment
+            // We should load it for payment, not for adding items.
+            // For now, we clear the cart to avoid confusion.
+            setCart([]);
+            if (table.currentOrder.customer) {
+                const customerFromOrder = customers.find(c => c.id === table.currentOrder.customer?.id);
+                if (customerFromOrder) {
+                    setSelectedCustomer(customerFromOrder);
+                }
+            }
+            if (table.currentOrder.paymentMethod === 'qris') {
+                setPaymentMethod('QRIS');
+            } else {
+                setPaymentMethod('Cash');
+            }
+            toast({
+                title: 'Meja dari Katalog Publik',
+                description: `Pesanan untuk ${table.currentOrder.customer?.name} menunggu pembayaran.`
+            });
+        } else if (table?.currentOrder) {
+            // This is a regular POS order
+            const reconstructedCart: CartItem[] = (table.currentOrder.items || []).map(orderItem => {
                 const product = products.find(p => p.id === orderItem.productId);
                 return {
                     ...orderItem,
@@ -218,25 +239,6 @@ export default function POS({ onPrintRequest }: POSProps) {
                 };
             });
             setCart(reconstructedCart);
-
-            if (table.currentOrder.customer) {
-                const customerFromOrder = customers.find(c => c.id === table.currentOrder.customer?.id);
-                if (customerFromOrder) {
-                    setSelectedCustomer(customerFromOrder);
-                }
-            }
-            
-            // Set payment method based on what customer chose in catalog
-            if (table.currentOrder.paymentMethod === 'qris') {
-                setPaymentMethod('QRIS');
-            } else {
-                setPaymentMethod('Cash');
-            }
-
-            toast({
-                title: 'Pesanan Dimuat',
-                description: `Pesanan dari meja ${table.name} telah dimuat ke keranjang.`
-            });
         }
     } else if (!tableId) { 
         setCart([]);
@@ -256,7 +258,7 @@ export default function POS({ onPrintRequest }: POSProps) {
       toast({
         variant: 'destructive',
         title: 'Stok Habis',
-        description: `${product.name} saat ini stoknya habis di toko ini.`,
+        description: `${product.name} saat ini stoknya habis.`,
       });
       return;
     }
@@ -446,7 +448,7 @@ export default function POS({ onPrintRequest }: POSProps) {
         paymentMethod: isPaid ? paymentMethod : 'Belum Dibayar',
         staffId: currentUser.id,
         pointsEarned,
-        pointsRedeemed,
+        pointsToRedeem,
         tableId, tableName,
     };
     
@@ -457,7 +459,7 @@ export default function POS({ onPrintRequest }: POSProps) {
             createdAt: serverTimestamp(),
         });
         
-        toast({ title: "Pesanan Dikirim!", description: "Pesanan Anda telah dikirim ke sistem untuk diproses." });
+        toast({ title: "Pesanan Dikirim!", description: "Pesanan Anda telah dikirim ke sistem untuk diproses oleh dapur." });
 
         refreshData();
         setCart([]);
@@ -890,5 +892,3 @@ export default function POS({ onPrintRequest }: POSProps) {
     </>
   );
 }
-
-    
