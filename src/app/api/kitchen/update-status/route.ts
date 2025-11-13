@@ -1,7 +1,9 @@
+
 'use server';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getFirebaseAdmin } from '@/lib/server/firebase-admin';
+import { collection, doc, runTransaction, query, where, getDocs, collectionGroup } from 'firebase-admin/firestore';
 
 export async function POST(req: NextRequest) {
   const { auth, db } = getFirebaseAdmin();
@@ -11,24 +13,22 @@ export async function POST(req: NextRequest) {
     if (!idToken) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    const decodedToken = await auth.verifyIdToken(idToken);
+    await auth.verifyIdToken(idToken);
     
-    // Ensure the user has the right to perform this action (e.g., is a tenant admin/kitchen staff)
-    const allowedRoles = ['admin', 'kitchen', 'pujasera_admin', 'pujasera_cashier'];
-    if (!decodedToken.role || !allowedRoles.includes(decodedToken.role)) {
-        return NextResponse.json({ error: 'Permission denied.' }, { status: 403 });
-    }
-
     const { tenantId, pujaseraId, parentTransactionId } = await req.json();
 
     if (!tenantId || !pujaseraId || !parentTransactionId) {
       return NextResponse.json({ error: 'Missing required IDs' }, { status: 400 });
     }
     
-    // Run a transaction to ensure atomicity
-    await db.runTransaction(async (transaction) => {
-        // 1. Find the sub-transaction document for the tenant
-        const subTransactionQuery = db.collection('stores').doc(tenantId).collection('transactions').where('parentTransactionId', '==', parentTransactionId);
+    await runTransaction(db, async (transaction) => {
+        // 1. Find the sub-transaction document for the tenant using a collection group query.
+        // This is more robust as it searches across all 'transactions' sub-collections.
+        const subTransactionQuery = query(
+            collectionGroup(db, 'transactions'), 
+            where('parentTransactionId', '==', parentTransactionId),
+            where('storeId', '==', tenantId)
+        );
         const subTransactionSnapshot = await transaction.get(subTransactionQuery);
 
         if (subTransactionSnapshot.empty) {
@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
         const subTransactionRef = subTransactionSnapshot.docs[0].ref;
 
         // 2. Find the main pujasera transaction document
-        const mainTransactionRef = db.collection('stores').doc(pujaseraId).collection('transactions').doc(parentTransactionId);
+        const mainTransactionRef = doc(db, 'stores', pujaseraId, 'transactions', parentTransactionId);
 
         // 3. Update both documents within the transaction
         transaction.update(subTransactionRef, { status: 'Siap Diambil' });
