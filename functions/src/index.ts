@@ -8,7 +8,6 @@ import { initializeApp, getApps } from "firebase-admin/app";
 import { subDays } from "date-fns";
 import { format } from "date-fns/format";
 import { id as idLocale } from "date-fns/locale";
-import type { CartItem, Transaction } from "./types";
 
 // Initialize Firebase Admin SDK if not already initialized
 if (getApps().length === 0) {
@@ -54,10 +53,10 @@ async function internalSendWhatsapp(deviceId: string, target: string, message: s
         });
 
         if (!response.ok) {
-            const responseJson = await response.json() as { status?: string; reason?: string };
+            const responseJson: { status?: string; reason?: string } = await response.json();
             logger.error('WhaCenter API HTTP Error:', { status: response.status, body: responseJson });
         } else {
-            const responseJson = await response.json() as { status?: string; reason?: string };
+            const responseJson: { status?: string; reason?: string } = await response.json();
             if (responseJson.status === 'error') {
                 logger.error('WhaCenter API Error:', responseJson.reason);
             }
@@ -129,7 +128,7 @@ async function handlePujaseraOrder(payload: any) {
     const newReceiptNumber = pujaseraCounter + 1;
     
     // Group items by tenant for distribution
-    const itemsByTenant: { [key: string]: { storeName: string, items: CartItem[] } } = {};
+    const itemsByTenant: { [key: string]: { storeName: string, items: any[] } } = {};
     for (const item of cart) {
         if (!item.storeId || !item.storeName) continue;
         if (!itemsByTenant[item.storeId]) {
@@ -140,7 +139,7 @@ async function handlePujaseraOrder(payload: any) {
     
     // Main Transaction
     const newTxRef = db.collection('stores').doc(pujaseraId).collection('transactions').doc();
-    const newTransactionData: Partial<Transaction> = {
+    const newTransactionData: { [key: string]: any } = {
         receiptNumber: newReceiptNumber,
         storeId: pujaseraId,
         customerId: customer.id || 'N/A',
@@ -310,10 +309,10 @@ export const onTopUpRequestUpdate = onDocumentUpdated("topUpRequests/{requestId}
   let customerMessage = '';
   let adminMessage = '';
 
-  if (status === 'disetujui') {
+  if (status === 'Disetujui') {
       customerMessage = `✅ *Top-up Disetujui!*\n\nHalo ${customerName},\nPermintaan top-up Anda untuk toko *${storeName}* telah disetujui.\n\nSejumlah *${formattedAmount} token* telah ditambahkan ke saldo Anda.\n\nTerima kasih!`;
       adminMessage = `✅ *Top-up Disetujui*\n\nPermintaan dari: *${storeName}*\nJumlah: *${formattedAmount} token*\n\nStatus berhasil diperbarui dan saldo toko telah ditambahkan.`;
-  } else if (status === 'ditolak') {
+  } else if (status === 'Ditolak') {
       customerMessage = `❌ *Top-up Ditolak*\n\nHalo ${customerName},\nMohon maaf, permintaan top-up Anda untuk toko *${storeName}* sejumlah ${formattedAmount} token telah ditolak.\n\nSilakan periksa bukti transfer Anda dan coba lagi, atau hubungi admin jika ada pertanyaan.`;
       adminMessage = `❌ *Top-up Ditolak*\n\nPermintaan dari: *${storeName}*\nJumlah: *${formattedAmount} token*\n\nStatus berhasil diperbarui. Tidak ada perubahan pada saldo toko.`;
   } else {

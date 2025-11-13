@@ -57,7 +57,6 @@ const nextConfig: NextConfig = {
     'firebase-admin',
     'genkit',
     '@genkit-ai/core',
-    'genkitx-openai',
     '@genkit-ai/firebase',
     '@genkit-ai/next',
     '@genkit-ai/google-genai',
