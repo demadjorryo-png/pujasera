@@ -66,10 +66,6 @@ export const processPujaseraQueue = onDocumentCreated("Pujaseraqueue/{jobId}", a
                 await handleWhatsappNotification(payload);
                 await snapshot.ref.update({ status: 'sent', processedAt: FieldValue.serverTimestamp() });
                 break;
-            case 'tenant-registration':
-                await handleTenantRegistration(payload);
-                await snapshot.ref.update({ status: 'completed', processedAt: FieldValue.serverTimestamp() });
-                break;
             default:
                 logger.warn(`Unknown job type: ${type}`);
                 await snapshot.ref.update({ status: 'unknown_type', error: `Unknown job type: ${type}`, processedAt: FieldValue.serverTimestamp() });
@@ -238,83 +234,6 @@ async function handleWhatsappNotification(payload: any) {
 
     logger.info(`Successfully sent WhatsApp message via queue to ${recipient}`);
 }
-
-async function handleTenantRegistration(payload: any) {
-    const { storeName, adminName, email, whatsapp, password, pujaseraGroupSlug } = payload;
-    let newUser: UserRecord | null = null;
-
-    try {
-        const pujaseraQuery = db.collection('stores').where('pujaseraGroupSlug', '==', pujaseraGroupSlug).limit(1);
-        const pujaseraSnapshot = await pujaseraQuery.get();
-        if (pujaseraSnapshot.empty) {
-            throw new Error('Grup pujasera tidak ditemukan.');
-        }
-        const pujaseraDoc = pujaseraSnapshot.docs[0];
-        const pujaseraData = pujaseraDoc.data();
-        
-        const feeSettingsDoc = await db.doc('appSettings/transactionFees').get();
-        const feeSettings = feeSettingsDoc.data() || {};
-        const bonusTokens = feeSettings.newTenantBonusTokens || 0;
-
-        const userRecord = await adminAuth.createUser({ email, password, displayName: adminName });
-        newUser = userRecord;
-        const uid = newUser.uid;
-        
-        await adminAuth.setCustomUserClaims(uid, { role: 'admin' });
-
-        const batch = db.batch();
-        const newStoreRef = db.collection('stores').doc();
-        batch.set(newStoreRef, {
-            name: storeName,
-            location: pujaseraData.location || '',
-            pradanaTokenBalance: bonusTokens,
-            adminUids: [uid],
-            createdAt: new Date().toISOString(),
-            transactionCounter: 0,
-            firstTransactionDate: null,
-            pujaseraGroupSlug,
-            pujaseraName: pujaseraData.name || '',
-            isPosEnabled: true,
-            posMode: 'terpusat',
-        });
-
-        const userRef = db.collection('users').doc(uid);
-        batch.set(userRef, {
-            name: adminName,
-            email,
-            whatsapp,
-            role: 'admin',
-            status: 'active',
-            storeId: newStoreRef.id,
-        });
-
-        // Add the new tenant's admin to the pujasera's adminUids list
-        const pujaseraStoreRef = db.doc(`stores/${pujaseraDoc.id}`);
-        batch.update(pujaseraStoreRef, {
-            adminUids: FieldValue.arrayUnion(uid)
-        });
-
-
-        await batch.commit();
-        logger.info(`New tenant '${storeName}' and admin '${email}' created.`);
-        
-        // Enqueue notifications
-        const welcomeMessage = `🎉 *Selamat Datang di Chika POS, ${adminName}!* 🎉\n\nToko Anda *"${storeName}"* telah berhasil terdaftar di pujasera *${pujaseraData.name}* dengan bonus *${bonusTokens} Pradana Token*.\n\nSilakan login untuk mulai mengelola toko Anda.`;
-        const adminMessage = `*TENANT BARU BERGABUNG*\n\n*Pujasera:* ${pujaseraData.name}\n*Tenant Baru:* ${storeName}\n*Admin Tenant:* ${adminName}\n*Email:* ${email}\n\nBonus ${bonusTokens} token telah diberikan.`;
-        
-        const queueRef = db.collection('Pujaseraqueue');
-        await queueRef.add({ type: 'whatsapp-notification', payload: { to: whatsapp, message: welcomeMessage } });
-        await queueRef.add({ type: 'whatsapp-notification', payload: { to: 'admin_group', message: adminMessage, isGroup: true } });
-
-    } catch (error: any) {
-        if (newUser) {
-            await adminAuth.deleteUser(newUser.uid).catch(delErr => logger.error(`Failed to clean up orphaned user ${newUser?.uid}`, delErr));
-        }
-        logger.error('Error in handleTenantRegistration:', error);
-        throw error; // Re-throw to be caught by the main handler
-    }
-}
-
 
 /**
  * Triggers when a new top-up request is created.
