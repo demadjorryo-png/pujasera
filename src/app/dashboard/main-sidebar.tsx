@@ -37,6 +37,7 @@ import {
   ChefHat,
   ShieldCheck,
   Building,
+  Briefcase,
 } from 'lucide-react';
 import * as React from 'react';
 import { Separator } from '@/components/ui/separator';
@@ -93,24 +94,47 @@ export function MainSidebar({ pradanaTokenBalance }: MainSidebarProps) {
              { view: 'platform-control', label: 'Kontrol Platform', icon: <ShieldCheck />, roles: ['superadmin'] },
         ]
     },
+    // --- PUJASERA GROUPS ---
     {
-        group: 'Pujasera',
-        icon: <Building />,
+        group: 'Operasional Pujasera',
+        icon: <Briefcase />,
         roles: ['pujasera_admin', 'pujasera_cashier'],
         items: [
             { view: 'pujasera-overview', label: 'Overview Pujasera', icon: <LayoutGrid />, roles: ['pujasera_admin'], tourId: 'sidebar-overview' },
             { view: 'pujasera-pos', label: 'Kasir Pujasera', icon: <Armchair />, roles: ['pujasera_cashier', 'pujasera_admin'], tourId: 'sidebar-pos' },
             { view: 'transactions', label: 'Transaksi', icon: <History />, roles: ['pujasera_admin', 'pujasera_cashier'], tourId: 'sidebar-transactions' },
             { view: 'kitchen', label: 'Dapur Terpusat', icon: <ChefHat />, roles: ['pujasera_admin', 'pujasera_cashier'], tourId: 'sidebar-kitchen' },
+        ]
+    },
+    {
+        group: 'Manajemen Pujasera',
+        icon: <Building />,
+        roles: ['pujasera_admin', 'pujasera_cashier'],
+        items: [
             { view: 'tenants', label: 'Manajemen Tenant', icon: <Store />, roles: ['pujasera_admin'], tourId: 'sidebar-tenants' },
             { view: 'employees', label: 'Manajemen Karyawan', icon: <Users />, roles: ['pujasera_admin'], tourId: 'sidebar-employees' },
             { view: 'customers', label: 'Pelanggan', icon: <Contact2 />, roles: ['pujasera_admin', 'pujasera_cashier'], tourId: 'sidebar-customers' },
-            { view: 'promotions', label: 'Promo Pujasera', icon: <Gift />, roles: ['pujasera_admin'], tourId: 'sidebar-promotions' },
-            { view: 'challenges', label: 'Tantangan Tenant', icon: <Trophy />, roles: ['pujasera_admin'], tourId: 'sidebar-challenges' },
-            { view: 'catalog', label: 'Katalog Publik', icon: <Newspaper />, roles: ['pujasera_admin'], tourId: 'sidebar-catalog' },
-            { view: 'receipt-settings', label: 'Pengaturan Struk', icon: <Receipt />, roles: ['pujasera_admin'], tourId: 'sidebar-receipt-settings' },
         ]
     },
+    {
+        group: 'Pertumbuhan & Marketing',
+        icon: <TrendingUp />,
+        roles: ['pujasera_admin'],
+        items: [
+             { view: 'promotions', label: 'Promo Pujasera', icon: <Gift />, roles: ['pujasera_admin'], tourId: 'sidebar-promotions' },
+            { view: 'challenges', label: 'Tantangan Tenant', icon: <Trophy />, roles: ['pujasera_admin'], tourId: 'sidebar-challenges' },
+            { view: 'catalog', label: 'Katalog Publik', icon: <Newspaper />, roles: ['pujasera_admin'], tourId: 'sidebar-catalog' },
+        ]
+    },
+    {
+        group: 'Pengaturan Pujasera',
+        icon: <Settings />,
+        roles: ['pujasera_admin'],
+        items: [
+             { view: 'receipt-settings', label: 'Pengaturan Struk', icon: <Receipt />, roles: ['pujasera_admin'], tourId: 'sidebar-receipt-settings' },
+        ]
+    },
+    // --- TENANT GROUPS ---
     {
         group: 'Operasional Tenant',
         icon: <Store />,
@@ -186,10 +210,10 @@ export function MainSidebar({ pradanaTokenBalance }: MainSidebarProps) {
       <SidebarContent>
         <SidebarMenu>
           {menuGroups.map((group) => {
-            if (!currentUser || !group.roles.includes(currentUser.role)) return null;
+            if (!currentUser || !group.roles.some(role => currentUser.role === role)) return null;
             
             const visibleItems = group.items.filter(item => {
-                const hasRole = item.roles.includes(currentUser.role);
+                const hasRole = item.roles.length > 0 ? item.roles.includes(currentUser.role) : true;
                 const checkPasses = item.check ? item.check() : true;
                 return hasRole && checkPasses;
             });
