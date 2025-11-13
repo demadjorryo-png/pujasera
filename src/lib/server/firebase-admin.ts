@@ -35,10 +35,12 @@ function initializeFirebaseAdmin() {
 /**
  * A getter function to safely retrieve initialized Firebase Admin services for API Routes.
  * This should be called at the beginning of any server-side function needing admin access.
+ * It now actively ensures initialization before returning services.
  * @returns An object containing the initialized `auth` and `db` services.
  */
 export function getFirebaseAdmin() {
-    initializeFirebaseAdmin();
+    initializeFirebaseAdmin(); // Ensure SDK is initialized on every call
+    
     // Throw an error if initialization failed and the app continues.
     if (admin.apps.length === 0) {
         throw new Error("Firebase Admin SDK is not initialized. API Route cannot function.");
