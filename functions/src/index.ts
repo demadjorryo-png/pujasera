@@ -142,7 +142,10 @@ async function handlePujaseraOrder(payload: any) {
         const tenantItems = tenantInfo.items;
         const tenantSubtotal = tenantItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
-        const newTenantTransactionRef = db.collection('stores').doc(tenantId).collection('transactions').doc();
+        // Use a predictable ID for the sub-transaction
+        const subTransactionId = `${newTxRef.id}_${tenantId}`;
+        const newTenantTransactionRef = db.collection('stores').doc(tenantId).collection('transactions').doc(subTransactionId);
+        
         batch.set(newTenantTransactionRef, {
             receiptNumber: newReceiptNumber,
             storeId: tenantId,
@@ -150,15 +153,9 @@ async function handlePujaseraOrder(payload: any) {
             customerName: customer.name,
             createdAt: newTransactionData.createdAt,
             items: tenantItems,
-            subtotal: tenantSubtotal, 
-            taxAmount: 0, // Handled at pujasera level
-            serviceFeeAmount: 0, // Handled at pujasera level
-            discountAmount: 0, // Handled at pujasera level
+            subtotal: tenantSubtotal,
             totalAmount: tenantSubtotal,
-            paymentMethod: 'Lunas (Pusat)', // Tenant receives it as paid
             status: 'Diproses',
-            pointsEarned: 0, 
-            pointsRedeemed: 0,
             notes: `Bagian dari pesanan pujasera #${String(newReceiptNumber).padStart(6, '0')}`,
             parentTransactionId: newTxRef.id,
             pujaseraId: pujaseraId,
@@ -171,7 +168,7 @@ async function handlePujaseraOrder(payload: any) {
         batch.update(tableRef, {
             'currentOrder.transactionId': newTxRef.id
         });
-    } else if (tableId) { // For POS orders
+    } else if (tableId && paymentMethod !== 'Belum Dibayar') { // For POS orders
          const tableRef = db.doc(`stores/${pujaseraId}/tables/${tableId}`);
          batch.update(tableRef, {
             status: 'Terisi',

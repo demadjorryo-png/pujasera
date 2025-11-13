@@ -3,7 +3,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getFirebaseAdmin } from '@/lib/server/firebase-admin';
-import { doc } from 'firebase-admin/firestore';
 
 export async function POST(req: NextRequest) {
   const { auth, db } = getFirebaseAdmin();
@@ -22,22 +21,20 @@ export async function POST(req: NextRequest) {
     }
     
     await db.runTransaction(async (transaction) => {
-        // Query only by parentTransactionId to avoid needing a composite index
-        const subTransactionQuery = db.collectionGroup('transactions')
-            .where('parentTransactionId', '==', parentTransactionId);
+        // Construct the predictable ID for the sub-transaction
+        const subTransactionId = `${parentTransactionId}_${tenantId}`;
+        const subTransactionRef = db.collection('stores').doc(tenantId).collection('transactions').doc(subTransactionId);
+        
+        // Directly get the sub-transaction document
+        const subTransactionDoc = await transaction.get(subTransactionRef);
 
-        const subTransactionSnapshot = await transaction.get(subTransactionQuery);
-
-        // Filter for the correct tenant in memory
-        const subTransactionDoc = subTransactionSnapshot.docs.find(doc => doc.data().storeId === tenantId);
-
-        if (!subTransactionDoc) {
+        if (!subTransactionDoc.exists) {
             throw new Error(`Sub-transaksi untuk tenant ${tenantId} dengan nota induk ${parentTransactionId} tidak ditemukan.`);
         }
+        
+        const mainTransactionRef = db.collection('stores').doc(pujaseraId).collection('transactions').doc(parentTransactionId);
 
-        const subTransactionRef = subTransactionDoc.ref;
-        const mainTransactionRef = doc(db, 'stores', pujaseraId, 'transactions', parentTransactionId);
-
+        // Update both documents in the same transaction
         transaction.update(subTransactionRef, { status: 'Siap Diambil' });
         transaction.update(mainTransactionRef, {
             [`itemsStatus.${tenantId}`]: 'Siap Diambil'
