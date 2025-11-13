@@ -106,8 +106,6 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                         tableDoc = await transaction.get(tableRef);
                     }
     
-                    transaction.update(transactionRef, { status: 'Selesai' });
-    
                     if (tableRef && tableDoc && tableDoc.exists()) {
                         if (tableDoc.data()?.isVirtual) {
                             transaction.delete(tableRef);
@@ -115,6 +113,9 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                             transaction.update(tableRef, { status: 'Menunggu Dibersihkan', currentOrder: null });
                         }
                     }
+
+                    // Update parent first
+                    transaction.update(transactionRef, { status: 'Selesai' });
                     
                     // NEW: Also update all related sub-transactions
                     const involvedTenantIds = Object.keys(slice.parentTransaction.itemsStatus || {});
@@ -261,27 +262,6 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
     
     const ordersDiproses = tenantOrderSlices.filter(s => s.status === 'Diproses');
     const ordersSiapDiambil = tenantOrderSlices.filter(s => s.status === 'Siap Diambil');
-    
-    if (!isPujaseraUser) {
-        // Render simple layout for tenants
-        return (
-             <div className="h-[calc(100vh-8rem)] flex flex-col">
-                <ScrollArea className="flex-grow">
-                    <div className="p-1 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                        {tenantOrderSlices.length > 0 ? (
-                           tenantOrderSlices.map(renderOrderCard)
-                        ) : (
-                            <div className="col-span-full flex flex-col items-center justify-center text-center text-muted-foreground h-96">
-                                <ChefHat className="w-16 h-16 mb-4" />
-                                <h3 className="text-lg font-semibold">Tidak ada pesanan aktif.</h3>
-                                <p>Halaman ini akan diperbarui secara otomatis saat pesanan baru masuk.</p>
-                            </div>
-                        )}
-                    </div>
-                </ScrollArea>
-            </div>
-        )
-    }
 
     return (
         <Tabs defaultValue="diproses" className="h-[calc(100vh-8rem)] flex flex-col">
