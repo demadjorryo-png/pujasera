@@ -3,7 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getFirebaseAdmin } from '@/lib/server/firebase-admin';
-import { doc, query, where, collectionGroup } from 'firebase-admin/firestore';
+import { doc, query, where } from 'firebase-admin/firestore';
 
 export async function POST(req: NextRequest) {
   const { auth, db } = getFirebaseAdmin();
@@ -22,9 +22,8 @@ export async function POST(req: NextRequest) {
     }
     
     await db.runTransaction(async (transaction) => {
-        // 1. Find the sub-transaction document for the tenant using a collection group query.
         const subTransactionQuery = query(
-            collectionGroup(db, 'transactions'), 
+            db.collectionGroup('transactions'), 
             where('parentTransactionId', '==', parentTransactionId),
             where('storeId', '==', tenantId)
         );
@@ -35,10 +34,8 @@ export async function POST(req: NextRequest) {
         }
         const subTransactionRef = subTransactionSnapshot.docs[0].ref;
 
-        // 2. Find the main pujasera transaction document
         const mainTransactionRef = doc(db, 'stores', pujaseraId, 'transactions', parentTransactionId);
 
-        // 3. Update both documents within the transaction
         transaction.update(subTransactionRef, { status: 'Siap Diambil' });
         transaction.update(mainTransactionRef, {
             [`itemsStatus.${tenantId}`]: 'Siap Diambil'
