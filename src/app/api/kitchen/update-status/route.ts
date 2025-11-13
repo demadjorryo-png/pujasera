@@ -3,7 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getFirebaseAdmin } from '@/lib/server/firebase-admin';
-import { doc, query, where } from 'firebase-admin/firestore';
+import { doc } from 'firebase-admin/firestore';
 
 export async function POST(req: NextRequest) {
   const { auth, db } = getFirebaseAdmin();
@@ -22,11 +22,10 @@ export async function POST(req: NextRequest) {
     }
     
     await db.runTransaction(async (transaction) => {
-        const subTransactionQuery = query(
-            db.collectionGroup('transactions'), 
-            where('parentTransactionId', '==', parentTransactionId),
-            where('storeId', '==', tenantId)
-        );
+        const subTransactionQuery = db.collectionGroup('transactions')
+            .where('parentTransactionId', '==', parentTransactionId)
+            .where('storeId', '==', tenantId);
+
         const subTransactionSnapshot = await transaction.get(subTransactionQuery);
 
         if (subTransactionSnapshot.empty) {
