@@ -4,11 +4,11 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as logger from "firebase-functions/logger";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { initializeApp, getApps } from "firebase-admin/app";
-import { getAuth } from "firebase-admin/auth";
+import { getAuth, UserRecord } from "firebase-admin/auth";
 import { subDays } from "date-fns";
 import { format } from "date-fns/format";
 import { id as idLocale } from "date-fns/locale";
-import type { CartItem, Table, TableOrder, Transaction } from "./types";
+import type { CartItem, Transaction } from "./types";
 
 // Initialize Firebase Admin SDK if not already initialized
 if (getApps().length === 0) {
@@ -84,7 +84,7 @@ export const processPujaseraQueue = onDocumentCreated("Pujaseraqueue/{jobId}", a
 
 
 async function handlePujaseraOrder(payload: any) {
-    const { pujaseraId, customer, cart, subtotal, taxAmount, serviceFeeAmount, totalAmount, paymentMethod, staffId, pointsEarned, pointsRedeemed, tableId, tableName, isFromCatalog } = payload;
+    const { pujaseraId, customer, cart, subtotal, taxAmount, serviceFeeAmount, totalAmount, paymentMethod, staffId, pointsEarned, pointsRedeemed, tableId, isFromCatalog } = payload;
     
     if (!pujaseraId || !customer || !cart || cart.length === 0) {
         throw new Error("Data pesanan tidak lengkap.");
@@ -103,11 +103,11 @@ async function handlePujaseraOrder(payload: any) {
     // Group items by tenant for distribution
     const itemsByTenant: { [key: string]: { storeName: string, items: CartItem[] } } = {};
     const tenantDocs = await db.collection('stores').where('pujaseraGroupSlug', '==', pujaseraData.pujaseraGroupSlug).get();
-    const pujaseraTenants = tenantDocs.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const pujaseraTenants = tenantDocs.docs.map(doc => ({ id: doc.id, name: doc.data().name }));
 
     for (const item of cart) {
         if (!item.storeId) continue;
-        const tenantStoreName = pujaseraTenants.find((t: any) => t.id === item.storeId)?.name || 'Tenant';
+        const tenantStoreName = pujaseraTenants.find((t) => t.id === item.storeId)?.name || 'Tenant';
         if (!itemsByTenant[item.storeId]) {
             itemsByTenant[item.storeId] = { storeName: tenantStoreName, items: [] };
         }
@@ -247,7 +247,7 @@ async function handleWhatsappNotification(payload: any) {
 
 async function handlePujaseraRegistration(payload: any) {
     const { pujaseraName, pujaseraLocation, adminName, email, whatsapp, password, referralCode } = payload;
-    let newUser = null;
+    let newUser: UserRecord | null = null;
 
     try {
         const feeSettingsDoc = await db.doc('appSettings/transactionFees').get();
@@ -314,7 +314,7 @@ async function handlePujaseraRegistration(payload: any) {
 
 async function handleTenantRegistration(payload: any) {
     const { storeName, adminName, email, whatsapp, password, pujaseraGroupSlug } = payload;
-    let newUser = null;
+    let newUser: UserRecord | null = null;
 
     try {
         const pujaseraQuery = db.collection('stores').where('pujaseraGroupSlug', '==', pujaseraGroupSlug).limit(1);
