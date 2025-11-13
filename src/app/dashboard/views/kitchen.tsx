@@ -48,7 +48,7 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
 
         // For regular tenants, their transactions are their slices, but only if they are part of a pujasera order
         if (!isPujaseraUser) {
-            return activeTransactions.filter(t => t.storeId === activeStore?.id && t.pujaseraId).map(tx => ({
+            return activeTransactions.filter(t => t.storeId === activeStore?.id && t.parentTransactionId).map(tx => ({
                 parentTransaction: tx,
                 tenantStoreId: tx.storeId,
                 tenantStoreName: activeStore?.name || 'Toko Anda',
@@ -95,16 +95,17 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
 
         try {
             if (action === 'complete') { // Action for Pujasera Admin/Cashier
-                await db.runTransaction(async (transaction) => {
+                await runTransaction(db, async (transaction) => {
                     const parentTransactionId = slice.parentTransaction.id;
-                    const transactionRef = doc(db, 'stores', activeStore.id, 'transactions', parentTransactionId);
-                    
                     let tableDoc = null;
                     let tableRef = null;
+
                     if (slice.parentTransaction.tableId) {
                         tableRef = doc(db, 'stores', activeStore.id, 'tables', slice.parentTransaction.tableId);
                         tableDoc = await transaction.get(tableRef);
                     }
+    
+                    const transactionRef = doc(db, 'stores', activeStore.id, 'transactions', parentTransactionId);
     
                     if (tableRef && tableDoc && tableDoc.exists()) {
                         if (tableDoc.data()?.isVirtual) {
@@ -114,10 +115,8 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                         }
                     }
 
-                    // Update parent first
                     transaction.update(transactionRef, { status: 'Selesai' });
                     
-                    // NEW: Also update all related sub-transactions
                     const involvedTenantIds = Object.keys(slice.parentTransaction.itemsStatus || {});
                     for (const tenantId of involvedTenantIds) {
                         const subTransactionId = `${parentTransactionId}_${tenantId}`;
