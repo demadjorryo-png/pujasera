@@ -1,3 +1,4 @@
+'use server';
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -15,13 +16,23 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendDailySalesSummary = exports.onTopUpRequestUpdate = exports.onTopUpRequestCreate = exports.processPujaseraQueue = void 0;
 const firestore_1 = require("firebase-functions/v2/firestore");
@@ -94,7 +105,7 @@ exports.processPujaseraQueue = (0, firestore_1.onDocumentCreated)("Pujaseraqueue
     }
 });
 async function handlePujaseraOrder(payload) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     const { pujaseraId, customer, cart, subtotal, taxAmount, serviceFeeAmount, totalAmount, paymentMethod, staffId, pointsEarned, pointsToRedeem, tableId, isFromCatalog } = payload;
     if (!pujaseraId || !customer || !cart || cart.length === 0) {
         throw new Error("Data pesanan tidak lengkap.");
@@ -127,10 +138,7 @@ async function handlePujaseraOrder(payload) {
         staffId: staffId || 'catalog-system',
         createdAt: new Date().toISOString(),
         items: cart,
-        subtotal,
-        taxAmount,
-        serviceFeeAmount,
-        discountAmount: 0,
+        subtotal, taxAmount, serviceFeeAmount, discountAmount: 0,
         totalAmount,
         paymentMethod,
         status: 'Diproses',
@@ -141,7 +149,7 @@ async function handlePujaseraOrder(payload) {
         notes: isFromCatalog ? 'Pesanan dari Katalog Publik' : '',
         itemsStatus: {} // Initialize status tracking
     };
-    newTransactionData.itemsStatus = Object.keys(itemsByTenant).reduce((acc, tenantId) => ({ ...acc, [tenantId]: 'Diproses' }), {});
+    newTransactionData.itemsStatus = Object.keys(itemsByTenant).reduce((acc, tenantId) => (Object.assign(Object.assign({}, acc), { [tenantId]: 'Diproses' })), {});
     batch.set(newTxRef, newTransactionData);
     // Create sub-transactions for each tenant
     for (const tenantId in itemsByTenant) {
@@ -191,7 +199,7 @@ async function handlePujaseraOrder(payload) {
     const feePercentage = (_a = feeSettings.feePercentage) !== null && _a !== void 0 ? _a : 0.005;
     const minFeeRp = (_b = feeSettings.minFeeRp) !== null && _b !== void 0 ? _b : 500;
     const maxFeeRp = (_c = feeSettings.maxFeeRp) !== null && _c !== void 0 ? _c : 2500;
-    const tokenValueRp = feeSettings.tokenValueRp !== null && feeSettings.tokenValueRp !== void 0 ? feeSettings.tokenValueRp : 1000;
+    const tokenValueRp = (_d = feeSettings.tokenValueRp) !== null && _d !== void 0 ? _d : 1000;
     const feeFromPercentage = totalAmount * feePercentage;
     const feeCappedAtMin = Math.max(feeFromPercentage, minFeeRp);
     const feeCappedAtMax = Math.min(feeCappedAtMin, maxFeeRp);
@@ -215,7 +223,7 @@ async function handleWhatsappNotification(payload) {
     if (!recipient) {
         throw new Error(`Recipient is invalid. 'to' field was '${to}' and adminGroup is not set.`);
     }
-    const fetch = (await Promise.resolve().then(() => __importStar(require('node-fetch')))).default;
+    const fetch = (await import('node-fetch')).default;
     const body = new URLSearchParams();
     body.append('device_id', deviceId);
     body.append(isGroup ? 'group' : 'number', recipient);
@@ -478,7 +486,6 @@ exports.sendDailySalesSummary = (0, scheduler_1.onSchedule)({
     schedule: "1 0 * * *", // Runs at 00:01 every day
     timeZone: "Asia/Jakarta",
 }, async (event) => {
-    var _a;
     logger.info("Memulai pengiriman ringkasan penjualan harian...");
     try {
         const storesSnapshot = await db.collection('stores').get();
@@ -487,10 +494,10 @@ exports.sendDailySalesSummary = (0, scheduler_1.onSchedule)({
             return;
         }
         const promises = storesSnapshot.docs.map(async (storeDoc) => {
-            var _b;
+            var _a;
             const store = storeDoc.data();
             const storeId = storeDoc.id;
-            if (((_b = store.notificationSettings) === null || _b === void 0 ? void 0 : _b.dailySummaryEnabled) === false) {
+            if (((_a = store.notificationSettings) === null || _a === void 0 ? void 0 : _a.dailySummaryEnabled) === false) {
                 logger.info(`Pengiriman ringkasan harian dinonaktifkan untuk toko: ${store.name}`);
                 return;
             }
