@@ -22,17 +22,20 @@ export async function POST(req: NextRequest) {
     }
     
     await db.runTransaction(async (transaction) => {
+        // Query only by parentTransactionId to avoid needing a composite index
         const subTransactionQuery = db.collectionGroup('transactions')
-            .where('parentTransactionId', '==', parentTransactionId)
-            .where('storeId', '==', tenantId);
+            .where('parentTransactionId', '==', parentTransactionId);
 
         const subTransactionSnapshot = await transaction.get(subTransactionQuery);
 
-        if (subTransactionSnapshot.empty) {
+        // Filter for the correct tenant in memory
+        const subTransactionDoc = subTransactionSnapshot.docs.find(doc => doc.data().storeId === tenantId);
+
+        if (!subTransactionDoc) {
             throw new Error(`Sub-transaksi untuk tenant ${tenantId} dengan nota induk ${parentTransactionId} tidak ditemukan.`);
         }
-        const subTransactionRef = subTransactionSnapshot.docs[0].ref;
 
+        const subTransactionRef = subTransactionDoc.ref;
         const mainTransactionRef = doc(db, 'stores', pujaseraId, 'transactions', parentTransactionId);
 
         transaction.update(subTransactionRef, { status: 'Siap Diambil' });
