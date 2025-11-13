@@ -39,7 +39,7 @@ function getWhatsappSettings(): WhatsappSettings {
  * Main function to handle all queued tasks.
  * It now orchestrates order processing, distribution, and WhatsApp notifications.
  */
-export const processWhatsappQueue = onDocumentCreated("whatsappQueue/{messageId}", async (event) => {
+export const processPujaseraQueue = onDocumentCreated("Pujaseraqueue/{jobId}", async (event) => {
     const snapshot = event.data;
     if (!snapshot) {
         logger.info("No data associated with the event, exiting.");
@@ -101,7 +101,8 @@ async function handlePujaseraOrder(payload: any) {
         totalAmount,
         paymentMethod,
         status: 'Diproses',
-        pointsEarned, pointsRedeemed,
+        pointsEarned: pointsEarned || 0,
+        pointsRedeemed: pointsRedeemed || 0,
         tableId: tableId || undefined,
         pujaseraGroupSlug: pujaseraData.pujaseraGroupSlug,
         notes: isFromCatalog ? 'Pesanan dari Katalog Publik' : '',
@@ -112,12 +113,13 @@ async function handlePujaseraOrder(payload: any) {
     const itemsByTenant: { [key: string]: { storeName: string, items: CartItem[] } } = {};
     for (const item of cart) {
         if (!item.storeId) continue;
-        const tenantStoreName = pujaseraData.tenants?.find((t: any) => t.id === item.storeId)?.name || 'Tenant';
+        const tenantStoreName = pujaseraTenants.find((t: any) => t.id === item.storeId)?.name || 'Tenant';
         if (!itemsByTenant[item.storeId]) {
             itemsByTenant[item.storeId] = { storeName: tenantStoreName, items: [] };
         }
         itemsByTenant[item.storeId].items.push(item);
     }
+    const pujaseraTenants = pujaseraData.tenants || [];
     
     (newTransactionData as any).itemsStatus = Object.keys(itemsByTenant).reduce((acc, tenantId) => ({ ...acc, [tenantId]: 'Diproses' }), {});
     batch.set(newTxRef, newTransactionData);
@@ -280,7 +282,7 @@ export const onTopUpRequestCreate = onDocumentCreated("topUpRequests/{requestId}
         return;
     }
     
-    const whatsappQueueRef = db.collection('whatsappQueue');
+    const whatsappQueueRef = db.collection('Pujaseraqueue');
 
     try {
         const historyRef = db.collection('stores').doc(storeId).collection('topUpRequests').doc(snapshot.id);
@@ -332,7 +334,7 @@ export const onTopUpRequestUpdate = onDocumentUpdated("topUpRequests/{requestId}
     return;
   }
 
-  const whatsappQueueRef = db.collection('whatsappQueue');
+  const whatsappQueueRef = db.collection('Pujaseraqueue');
   const formattedAmount = (tokensToAdd || 0).toLocaleString('id-ID');
   
   let customerWhatsapp = '';
@@ -454,7 +456,7 @@ export const sendDailySalesSummary = onSchedule({
                     if (adminData && adminData.whatsapp) {
                         const message = `*Ringkasan Harian Chika POS*\n*${store.name}* - ${formattedDate}\n\nHalo *${adminData.name}*, berikut adalah ringkasan penjualan Anda kemarin:\n- *Total Omset*: Rp ${totalRevenue.toLocaleString('id-ID')}\n- *Jumlah Transaksi*: ${totalTransactions}\n\nTerus pantau dan optimalkan performa penjualan Anda melalui dasbor Chika. Semangat selalu! 💪\n\n_Apabila tidak berkenan, fitur ini dapat dinonaktifkan di menu Pengaturan._`;
 
-                        await db.collection('whatsappQueue').add({
+                        await db.collection('Pujaseraqueue').add({
                             type: 'whatsapp-notification',
                             payload: {
                                 to: adminData.whatsapp,

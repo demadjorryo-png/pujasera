@@ -1,4 +1,3 @@
-
 import { NextRequest, NextResponse } from 'next/server';
 import { getFirebaseAdmin } from '@/lib/server/firebase-admin';
 import type { OrderPayload, Table, TableOrder, Transaction } from '@/lib/types';
@@ -24,6 +23,8 @@ export async function POST(req: NextRequest) {
         const batch = db.batch();
         
         let tableIdForOrder: string | undefined = undefined;
+        let finalTableData: Partial<Table> | null = null;
+        let newTableRef;
 
         // If payment is at the cashier, create a virtual table as a marker
         if (paymentMethod === 'kasir') {
@@ -31,18 +32,18 @@ export async function POST(req: NextRequest) {
             const virtualTableCounter = pujaseraData.virtualTableCounter || 0;
             const virtualTableName = `WEB-${virtualTableCounter + 1}`;
             
-            const newTableRef = db.collection('stores').doc(pujaseraId).collection('tables').doc();
+            newTableRef = db.collection('stores').doc(pujaseraId).collection('tables').doc();
             tableIdForOrder = newTableRef.id;
 
             const tableOrder: TableOrder = {
                 items: cart,
                 totalAmount: totalAmount,
                 orderTime: new Date().toISOString(),
-                customer: { id: customer.id, name: customer.name, phone: customer.phone },
+                customer: { id: customer.id, name: customer.name, phone: customer.phone, avatarUrl: customer.avatarUrl },
                 paymentMethod: 'kasir',
             };
             
-            const newTableData: Partial<Table> = {
+            finalTableData = {
                 name: virtualTableName,
                 status: 'Terisi',
                 capacity: 1,
@@ -50,13 +51,13 @@ export async function POST(req: NextRequest) {
                 currentOrder: tableOrder
             };
 
-            batch.set(newTableRef, newTableData);
+            batch.set(newTableRef, finalTableData);
             batch.update(pujaseraStoreRef, { virtualTableCounter: FieldValue.increment(1) });
         }
         
         // Queue the order for processing by the Cloud Function
-        const whatsappQueueRef = db.collection('whatsappQueue').doc();
-        batch.set(whatsappQueueRef, {
+        const pujaseraQueueRef = db.collection('Pujaseraqueue').doc();
+        batch.set(pujaseraQueueRef, {
             type: 'pujasera-order',
             payload: {
                 ...payload,
@@ -72,7 +73,12 @@ export async function POST(req: NextRequest) {
             ? `Pesanan berhasil dibuat. Silakan bayar di kasir dengan menyebutkan nama Anda.`
             : `Pesanan berhasil dibuat dan akan segera diproses setelah pembayaran dikonfirmasi.`;
 
-        return NextResponse.json({ success: true, message });
+        // Return table data so client can create a local active order session
+        return NextResponse.json({ 
+            success: true, 
+            message,
+            table: finalTableData ? { id: tableIdForOrder, ...finalTableData } : null,
+        });
 
     } catch (error) {
         console.error('Error creating catalog order:', error);

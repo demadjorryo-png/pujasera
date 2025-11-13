@@ -1,4 +1,3 @@
-
 'use client';
 
 import * as React from 'react';
@@ -74,7 +73,7 @@ import { useDashboard } from '@/contexts/dashboard-context';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Switch } from '@/components/ui/switch';
 import type { PointEarningSettings } from '@/lib/types';
-import { getPointEarningSettings } from '@/lib/point-earning-settings';
+import { getPointEarningSettings } from '@/lib/server/point-earning-settings';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 
@@ -188,10 +187,19 @@ export default function POS({ onPrintRequest }: POSProps) {
 
 
   React.useEffect(() => {
-    if (activeStore?.id) {
-        getPointEarningSettings(activeStore.id).then(setPointSettings);
+    async function fetchSettings() {
+      if (activeStore?.id) {
+          try {
+            const settings = await getPointEarningSettings(activeStore.id);
+            setPointSettings(settings);
+          } catch (error) {
+            console.error("Failed to fetch point settings on client:", error);
+          }
+      }
     }
+    fetchSettings();
   }, [activeStore?.id]);
+
 
   // Effect to load order from table if it exists
   React.useEffect(() => {
@@ -437,12 +445,13 @@ export default function POS({ onPrintRequest }: POSProps) {
         subtotal, taxAmount, serviceFeeAmount, totalAmount,
         paymentMethod: isPaid ? paymentMethod : 'Belum Dibayar',
         staffId: currentUser.id,
-        pointsEarned, pointsRedeemed,
+        pointsEarned,
+        pointsRedeemed,
         tableId, tableName,
     };
     
     try {
-        await addDoc(collection(db, 'whatsappQueue'), {
+        await addDoc(collection(db, 'Pujaseraqueue'), {
             type: 'pujasera-order',
             payload: payload,
             createdAt: serverTimestamp(),
