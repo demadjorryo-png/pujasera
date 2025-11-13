@@ -1,4 +1,5 @@
 
+'use server';
 import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as logger from "firebase-functions/logger";
@@ -84,7 +85,7 @@ export const processPujaseraQueue = onDocumentCreated("Pujaseraqueue/{jobId}", a
 
 
 async function handlePujaseraOrder(payload: any) {
-    const { pujaseraId, customer, cart, subtotal, taxAmount, serviceFeeAmount, totalAmount, paymentMethod, staffId, pointsEarned, pointsRedeemed, tableId, isFromCatalog } = payload;
+    const { pujaseraId, customer, cart, subtotal, taxAmount, serviceFeeAmount, totalAmount, paymentMethod, staffId, pointsEarned, pointsToRedeem, tableId, isFromCatalog } = payload;
     
     if (!pujaseraId || !customer || !cart || cart.length === 0) {
         throw new Error("Data pesanan tidak lengkap.");
@@ -102,14 +103,10 @@ async function handlePujaseraOrder(payload: any) {
     
     // Group items by tenant for distribution
     const itemsByTenant: { [key: string]: { storeName: string, items: CartItem[] } } = {};
-    const tenantDocs = await db.collection('stores').where('pujaseraGroupSlug', '==', pujaseraData.pujaseraGroupSlug).get();
-    const pujaseraTenants = tenantDocs.docs.map(doc => ({ id: doc.id, name: doc.data().name }));
-
     for (const item of cart) {
-        if (!item.storeId) continue;
-        const tenantStoreName = pujaseraTenants.find((t) => t.id === item.storeId)?.name || 'Tenant';
+        if (!item.storeId || !item.storeName) continue;
         if (!itemsByTenant[item.storeId]) {
-            itemsByTenant[item.storeId] = { storeName: tenantStoreName, items: [] };
+            itemsByTenant[item.storeId] = { storeName: item.storeName, items: [] };
         }
         itemsByTenant[item.storeId].items.push(item);
     }
@@ -129,7 +126,7 @@ async function handlePujaseraOrder(payload: any) {
         paymentMethod,
         status: 'Diproses',
         pointsEarned: pointsEarned || 0,
-        pointsRedeemed: pointsRedeemed || 0,
+        pointsRedeemed: pointsToRedeem || 0,
         tableId: tableId || undefined,
         pujaseraGroupSlug: pujaseraData.pujaseraGroupSlug,
         notes: isFromCatalog ? 'Pesanan dari Katalog Publik' : '',
@@ -145,20 +142,20 @@ async function handlePujaseraOrder(payload: any) {
         const tenantItems = tenantInfo.items;
         const tenantSubtotal = tenantItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
-        const newTenantTransactionRef = db.collection('stores').doc(tenantId).collection('transactions').doc();
+        // Use a predictable ID for the sub-transaction
+        const subTransactionId = `${newTxRef.id}_${tenantId}`;
+        const newTenantTransactionRef = db.collection('stores').doc(tenantId).collection('transactions').doc(subTransactionId);
+        
         batch.set(newTenantTransactionRef, {
             receiptNumber: newReceiptNumber,
             storeId: tenantId,
             customerId: customer.id,
             customerName: customer.name,
-            staffId: staffId,
             createdAt: newTransactionData.createdAt,
             items: tenantItems,
-            subtotal: tenantSubtotal, taxAmount: 0, serviceFeeAmount: 0, discountAmount: 0,
+            subtotal: tenantSubtotal,
             totalAmount: tenantSubtotal,
-            paymentMethod,
             status: 'Diproses',
-            pointsEarned: 0, pointsRedeemed: 0,
             notes: `Bagian dari pesanan pujasera #${String(newReceiptNumber).padStart(6, '0')}`,
             parentTransactionId: newTxRef.id,
             pujaseraId: pujaseraId,
@@ -171,7 +168,7 @@ async function handlePujaseraOrder(payload: any) {
         batch.update(tableRef, {
             'currentOrder.transactionId': newTxRef.id
         });
-    } else if (tableId) { // For POS orders
+    } else if (tableId && paymentMethod !== 'Belum Dibayar') { // For POS orders
          const tableRef = db.doc(`stores/${pujaseraId}/tables/${tableId}`);
          batch.update(tableRef, {
             status: 'Terisi',
@@ -322,7 +319,8 @@ async function handleTenantRegistration(payload: any) {
         if (pujaseraSnapshot.empty) {
             throw new Error('Grup pujasera tidak ditemukan.');
         }
-        const pujaseraData = pujaseraSnapshot.docs[0].data();
+        const pujaseraDoc = pujaseraSnapshot.docs[0];
+        const pujaseraData = pujaseraDoc.data();
         
         const feeSettingsDoc = await db.doc('appSettings/transactionFees').get();
         const feeSettings = feeSettingsDoc.data() || {};
@@ -360,6 +358,13 @@ async function handleTenantRegistration(payload: any) {
             storeId: newStoreRef.id,
         });
 
+        // Add the new tenant's admin to the pujasera's adminUids list
+        const pujaseraStoreRef = db.doc(`stores/${pujaseraDoc.id}`);
+        batch.update(pujaseraStoreRef, {
+            adminUids: FieldValue.arrayUnion(uid)
+        });
+
+
         await batch.commit();
         logger.info(`New tenant '${storeName}' and admin '${email}' created.`);
         
@@ -379,38 +384,6 @@ async function handleTenantRegistration(payload: any) {
         throw error; // Re-throw to be caught by the main handler
     }
 }
-
-
-/**
- * Triggers when a tenant updates their transaction status.
- * Syncs the "Siap Diambil" status back to the main pujasera transaction.
- */
-export const onTenantTransactionUpdate = onDocumentUpdated("stores/{tenantId}/transactions/{transactionId}", async (event) => {
-    const before = event.data?.before.data();
-    const after = event.data?.after.data();
-
-    if (
-        !before || !after ||
-        !(before.status === 'Diproses' && after.status === 'Siap Diambil') ||
-        !after.parentTransactionId || !after.pujaseraId
-    ) {
-        return;
-    }
-
-    const { parentTransactionId, pujaseraId, storeId } = after;
-    logger.info(`Tenant ${storeId} marked order for parent tx ${parentTransactionId} as ready. Syncing status.`);
-
-    const mainTransactionRef = db.doc(`stores/${pujaseraId}/transactions/${parentTransactionId}`);
-
-    try {
-        await mainTransactionRef.update({
-            [`itemsStatus.${storeId}`]: 'Siap Diambil'
-        });
-        logger.info(`Successfully synced 'Siap Diambil' status for tenant ${storeId} to main transaction ${parentTransactionId}.`);
-    } catch (error) {
-        logger.error(`Error syncing status for tx ${parentTransactionId}:`, error);
-    }
-});
 
 
 /**

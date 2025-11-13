@@ -1,9 +1,43 @@
+'use server';
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.sendDailySalesSummary = exports.onTopUpRequestUpdate = exports.onTopUpRequestCreate = exports.onTenantTransactionUpdate = exports.processPujaseraQueue = void 0;
+exports.sendDailySalesSummary = exports.onTopUpRequestUpdate = exports.onTopUpRequestCreate = exports.processPujaseraQueue = void 0;
 const firestore_1 = require("firebase-functions/v2/firestore");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
-const logger = require("firebase-functions/logger");
+const logger = __importStar(require("firebase-functions/logger"));
 const firestore_2 = require("firebase-admin/firestore");
 const app_1 = require("firebase-admin/app");
 const auth_1 = require("firebase-admin/auth");
@@ -71,8 +105,8 @@ exports.processPujaseraQueue = (0, firestore_1.onDocumentCreated)("Pujaseraqueue
     }
 });
 async function handlePujaseraOrder(payload) {
-    var _a, _b, _c, _d, _e;
-    const { pujaseraId, customer, cart, subtotal, taxAmount, serviceFeeAmount, totalAmount, paymentMethod, staffId, pointsEarned, pointsRedeemed, tableId, isFromCatalog } = payload;
+    var _a, _b, _c, _d;
+    const { pujaseraId, customer, cart, subtotal, taxAmount, serviceFeeAmount, totalAmount, paymentMethod, staffId, pointsEarned, pointsToRedeem, tableId, isFromCatalog } = payload;
     if (!pujaseraId || !customer || !cart || cart.length === 0) {
         throw new Error("Data pesanan tidak lengkap.");
     }
@@ -86,14 +120,11 @@ async function handlePujaseraOrder(payload) {
     const newReceiptNumber = pujaseraCounter + 1;
     // Group items by tenant for distribution
     const itemsByTenant = {};
-    const tenantDocs = await db.collection('stores').where('pujaseraGroupSlug', '==', pujaseraData.pujaseraGroupSlug).get();
-    const pujaseraTenants = tenantDocs.docs.map(doc => ({ id: doc.id, name: doc.data().name }));
     for (const item of cart) {
-        if (!item.storeId)
+        if (!item.storeId || !item.storeName)
             continue;
-        const tenantStoreName = ((_a = pujaseraTenants.find((t) => t.id === item.storeId)) === null || _a === void 0 ? void 0 : _a.name) || 'Tenant';
         if (!itemsByTenant[item.storeId]) {
-            itemsByTenant[item.storeId] = { storeName: tenantStoreName, items: [] };
+            itemsByTenant[item.storeId] = { storeName: item.storeName, items: [] };
         }
         itemsByTenant[item.storeId].items.push(item);
     }
@@ -112,7 +143,7 @@ async function handlePujaseraOrder(payload) {
         paymentMethod,
         status: 'Diproses',
         pointsEarned: pointsEarned || 0,
-        pointsRedeemed: pointsRedeemed || 0,
+        pointsRedeemed: pointsToRedeem || 0,
         tableId: tableId || undefined,
         pujaseraGroupSlug: pujaseraData.pujaseraGroupSlug,
         notes: isFromCatalog ? 'Pesanan dari Katalog Publik' : '',
@@ -125,20 +156,19 @@ async function handlePujaseraOrder(payload) {
         const tenantInfo = itemsByTenant[tenantId];
         const tenantItems = tenantInfo.items;
         const tenantSubtotal = tenantItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
-        const newTenantTransactionRef = db.collection('stores').doc(tenantId).collection('transactions').doc();
+        // Use a predictable ID for the sub-transaction
+        const subTransactionId = `${newTxRef.id}_${tenantId}`;
+        const newTenantTransactionRef = db.collection('stores').doc(tenantId).collection('transactions').doc(subTransactionId);
         batch.set(newTenantTransactionRef, {
             receiptNumber: newReceiptNumber,
             storeId: tenantId,
             customerId: customer.id,
             customerName: customer.name,
-            staffId: staffId,
             createdAt: newTransactionData.createdAt,
             items: tenantItems,
-            subtotal: tenantSubtotal, taxAmount: 0, serviceFeeAmount: 0, discountAmount: 0,
+            subtotal: tenantSubtotal,
             totalAmount: tenantSubtotal,
-            paymentMethod,
             status: 'Diproses',
-            pointsEarned: 0, pointsRedeemed: 0,
             notes: `Bagian dari pesanan pujasera #${String(newReceiptNumber).padStart(6, '0')}`,
             parentTransactionId: newTxRef.id,
             pujaseraId: pujaseraId,
@@ -151,7 +181,7 @@ async function handlePujaseraOrder(payload) {
             'currentOrder.transactionId': newTxRef.id
         });
     }
-    else if (tableId) { // For POS orders
+    else if (tableId && paymentMethod !== 'Belum Dibayar') { // For POS orders
         const tableRef = db.doc(`stores/${pujaseraId}/tables/${tableId}`);
         batch.update(tableRef, {
             status: 'Terisi',
@@ -166,10 +196,10 @@ async function handlePujaseraOrder(payload) {
     // Handle token deduction
     const settingsDoc = await db.doc('appSettings/transactionFees').get();
     const feeSettings = settingsDoc.data() || {};
-    const feePercentage = (_b = feeSettings.feePercentage) !== null && _b !== void 0 ? _b : 0.005;
-    const minFeeRp = (_c = feeSettings.minFeeRp) !== null && _c !== void 0 ? _c : 500;
-    const maxFeeRp = (_d = feeSettings.maxFeeRp) !== null && _d !== void 0 ? _d : 2500;
-    const tokenValueRp = (_e = feeSettings.tokenValueRp) !== null && _e !== void 0 ? _e : 1000;
+    const feePercentage = (_a = feeSettings.feePercentage) !== null && _a !== void 0 ? _a : 0.005;
+    const minFeeRp = (_b = feeSettings.minFeeRp) !== null && _b !== void 0 ? _b : 500;
+    const maxFeeRp = (_c = feeSettings.maxFeeRp) !== null && _c !== void 0 ? _c : 2500;
+    const tokenValueRp = (_d = feeSettings.tokenValueRp) !== null && _d !== void 0 ? _d : 1000;
     const feeFromPercentage = totalAmount * feePercentage;
     const feeCappedAtMin = Math.max(feeFromPercentage, minFeeRp);
     const feeCappedAtMax = Math.min(feeCappedAtMin, maxFeeRp);
@@ -193,7 +223,7 @@ async function handleWhatsappNotification(payload) {
     if (!recipient) {
         throw new Error(`Recipient is invalid. 'to' field was '${to}' and adminGroup is not set.`);
     }
-    const fetch = (await Promise.resolve().then(() => require('node-fetch'))).default;
+    const fetch = (await import('node-fetch')).default;
     const body = new URLSearchParams();
     body.append('device_id', deviceId);
     body.append(isGroup ? 'group' : 'number', recipient);
@@ -277,7 +307,8 @@ async function handleTenantRegistration(payload) {
         if (pujaseraSnapshot.empty) {
             throw new Error('Grup pujasera tidak ditemukan.');
         }
-        const pujaseraData = pujaseraSnapshot.docs[0].data();
+        const pujaseraDoc = pujaseraSnapshot.docs[0];
+        const pujaseraData = pujaseraDoc.data();
         const feeSettingsDoc = await db.doc('appSettings/transactionFees').get();
         const feeSettings = feeSettingsDoc.data() || {};
         const bonusTokens = feeSettings.newTenantBonusTokens || 0;
@@ -309,6 +340,11 @@ async function handleTenantRegistration(payload) {
             status: 'active',
             storeId: newStoreRef.id,
         });
+        // Add the new tenant's admin to the pujasera's adminUids list
+        const pujaseraStoreRef = db.doc(`stores/${pujaseraDoc.id}`);
+        batch.update(pujaseraStoreRef, {
+            adminUids: firestore_2.FieldValue.arrayUnion(uid)
+        });
         await batch.commit();
         logger.info(`New tenant '${storeName}' and admin '${email}' created.`);
         // Enqueue notifications
@@ -326,32 +362,6 @@ async function handleTenantRegistration(payload) {
         throw error; // Re-throw to be caught by the main handler
     }
 }
-/**
- * Triggers when a tenant updates their transaction status.
- * Syncs the "Siap Diambil" status back to the main pujasera transaction.
- */
-exports.onTenantTransactionUpdate = (0, firestore_1.onDocumentUpdated)("stores/{tenantId}/transactions/{transactionId}", async (event) => {
-    var _a, _b;
-    const before = (_a = event.data) === null || _a === void 0 ? void 0 : _a.before.data();
-    const after = (_b = event.data) === null || _b === void 0 ? void 0 : _b.after.data();
-    if (!before || !after ||
-        !(before.status === 'Diproses' && after.status === 'Siap Diambil') ||
-        !after.parentTransactionId || !after.pujaseraId) {
-        return;
-    }
-    const { parentTransactionId, pujaseraId, storeId } = after;
-    logger.info(`Tenant ${storeId} marked order for parent tx ${parentTransactionId} as ready. Syncing status.`);
-    const mainTransactionRef = db.doc(`stores/${pujaseraId}/transactions/${parentTransactionId}`);
-    try {
-        await mainTransactionRef.update({
-            [`itemsStatus.${storeId}`]: 'Siap Diambil'
-        });
-        logger.info(`Successfully synced 'Siap Diambil' status for tenant ${storeId} to main transaction ${parentTransactionId}.`);
-    }
-    catch (error) {
-        logger.error(`Error syncing status for tx ${parentTransactionId}:`, error);
-    }
-});
 /**
  * Triggers when a new top-up request is created.
  * It syncs the request to the store's subcollection and sends a notification to the admin group.
