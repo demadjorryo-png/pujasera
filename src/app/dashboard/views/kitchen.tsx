@@ -96,17 +96,23 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
             if (action === 'complete') { // Action for Pujasera Admin/Cashier
                 await runTransaction(db, async (transaction) => {
                     const transactionRef = doc(db, 'stores', activeStore.id, 'transactions', slice.parentTransaction.id);
+                    
+                    // --- READS FIRST ---
+                    let tableDoc = null;
+                    let tableRef = null;
+                    if (slice.parentTransaction.tableId) {
+                        tableRef = doc(db, 'stores', activeStore.id, 'tables', slice.parentTransaction.tableId);
+                        tableDoc = await transaction.get(tableRef);
+                    }
+
+                    // --- WRITES SECOND ---
                     transaction.update(transactionRef, { status: 'Selesai' });
 
-                    if (slice.parentTransaction.tableId) {
-                        const tableRef = doc(db, 'stores', activeStore.id, 'tables', slice.parentTransaction.tableId);
-                        const tableDoc = await transaction.get(tableRef);
-                        if (tableDoc.exists()) {
-                            if (tableDoc.data()?.isVirtual) {
-                                transaction.delete(tableRef);
-                            } else {
-                                transaction.update(tableRef, { status: 'Menunggu Dibersihkan', currentOrder: null });
-                            }
+                    if (tableRef && tableDoc && tableDoc.exists()) {
+                        if (tableDoc.data()?.isVirtual) {
+                            transaction.delete(tableRef);
+                        } else {
+                            transaction.update(tableRef, { status: 'Menunggu Dibersihkan', currentOrder: null });
                         }
                     }
                 });
