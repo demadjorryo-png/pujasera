@@ -3,15 +3,20 @@ import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/fire
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as logger from "firebase-functions/logger";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
-import { initializeApp } from "firebase-admin/app";
+import { initializeApp, getApps } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
 import { subDays } from "date-fns";
 import { format } from "date-fns/format";
 import { id as idLocale } from "date-fns/locale";
 import type { CartItem, Table, TableOrder, Transaction } from "./types";
 
-// Initialize Firebase Admin SDK
-initializeApp();
+// Initialize Firebase Admin SDK if not already initialized
+if (getApps().length === 0) {
+    initializeApp();
+}
 const db = getFirestore();
+const adminAuth = getAuth();
+
 
 interface WhatsappSettings {
   deviceId?: string;
@@ -57,7 +62,15 @@ export const processPujaseraQueue = onDocumentCreated("Pujaseraqueue/{jobId}", a
                 break;
             case 'whatsapp-notification':
                 await handleWhatsappNotification(payload);
-                 await snapshot.ref.update({ status: 'sent', processedAt: FieldValue.serverTimestamp() });
+                await snapshot.ref.update({ status: 'sent', processedAt: FieldValue.serverTimestamp() });
+                break;
+            case 'pujasera-registration':
+                await handlePujaseraRegistration(payload);
+                await snapshot.ref.update({ status: 'completed', processedAt: FieldValue.serverTimestamp() });
+                break;
+            case 'tenant-registration':
+                await handleTenantRegistration(payload);
+                await snapshot.ref.update({ status: 'completed', processedAt: FieldValue.serverTimestamp() });
                 break;
             default:
                 logger.warn(`Unknown job type: ${type}`);
@@ -230,6 +243,141 @@ async function handleWhatsappNotification(payload: any) {
     }
 
     logger.info(`Successfully sent WhatsApp message via queue to ${recipient}`);
+}
+
+async function handlePujaseraRegistration(payload: any) {
+    const { pujaseraName, pujaseraLocation, adminName, email, whatsapp, password, referralCode } = payload;
+    let newUser = null;
+
+    try {
+        const feeSettingsDoc = await db.doc('appSettings/transactionFees').get();
+        const feeSettings = feeSettingsDoc.data() || {};
+        const bonusTokens = feeSettings.newPujaseraBonusTokens || 0;
+
+        const userRecord = await adminAuth.createUser({ email, password, displayName: adminName });
+        newUser = userRecord;
+        const uid = newUser.uid;
+
+        const pujaseraGroupSlug = pujaseraName.toLowerCase().replace(/\s+/g, '-').replace(/[^\w\-]+/g, '').replace(/\-\-+/g, '-').replace(/^-+/, '').replace(/-+$/, '') + '-' + Math.random().toString(36).substring(2, 7);
+        const primaryStoreIdForAdmin = uid;
+
+        await adminAuth.setCustomUserClaims(uid, { role: 'pujasera_admin', pujaseraGroupSlug });
+
+        const batch = db.batch();
+        const storeRef = db.collection('stores').doc(primaryStoreIdForAdmin);
+        batch.set(storeRef, {
+            name: pujaseraName,
+            location: pujaseraLocation,
+            pradanaTokenBalance: bonusTokens,
+            adminUids: [uid],
+            createdAt: new Date().toISOString(),
+            transactionCounter: 0,
+            firstTransactionDate: null,
+            referralCode: referralCode || '',
+            pujaseraName,
+            pujaseraLocation,
+            pujaseraGroupSlug,
+            catalogSlug: pujaseraGroupSlug,
+            isPosEnabled: true,
+        });
+
+        const userRef = db.collection('users').doc(uid);
+        batch.set(userRef, {
+            name: adminName,
+            email,
+            whatsapp,
+            role: 'pujasera_admin',
+            status: 'active',
+            storeId: primaryStoreIdForAdmin,
+            pujaseraGroupSlug,
+        });
+
+        await batch.commit();
+        logger.info(`New pujasera group and admin created for ${email}`);
+        
+        // Enqueue notifications
+        const welcomeMessage = `🎉 *Selamat Datang di Chika POS, ${adminName}!* 🎉\n\nGrup Pujasera Anda *"${pujaseraName}"* telah berhasil dibuat dengan bonus *${bonusTokens} Pradana Token*.\n\nSilakan login untuk mulai mengelola pujasera Anda.`;
+        const adminMessage = `*PENDAFTARAN PUJASERA BARU*\n\n*Pujasera:* ${pujaseraName}\n*Lokasi:* ${pujaseraLocation}\n*Admin:* ${adminName}\n*Email:* ${email}\n*WhatsApp:* ${whatsapp}\n\nBonus ${bonusTokens} token telah diberikan.`;
+        
+        const queueRef = db.collection('Pujaseraqueue');
+        await queueRef.add({ type: 'whatsapp-notification', payload: { to: whatsapp, message: welcomeMessage } });
+        await queueRef.add({ type: 'whatsapp-notification', payload: { to: 'admin_group', message: adminMessage, isGroup: true } });
+
+    } catch (error: any) {
+        if (newUser) {
+            await adminAuth.deleteUser(newUser.uid).catch(delErr => logger.error(`Failed to clean up orphaned user ${newUser?.uid}`, delErr));
+        }
+        logger.error('Error in handlePujaseraRegistration:', error);
+        throw error; // Re-throw to be caught by the main handler
+    }
+}
+
+async function handleTenantRegistration(payload: any) {
+    const { storeName, adminName, email, whatsapp, password, pujaseraGroupSlug } = payload;
+    let newUser = null;
+
+    try {
+        const pujaseraQuery = db.collection('stores').where('pujaseraGroupSlug', '==', pujaseraGroupSlug).limit(1);
+        const pujaseraSnapshot = await pujaseraQuery.get();
+        if (pujaseraSnapshot.empty) {
+            throw new Error('Grup pujasera tidak ditemukan.');
+        }
+        const pujaseraData = pujaseraSnapshot.docs[0].data();
+        
+        const feeSettingsDoc = await db.doc('appSettings/transactionFees').get();
+        const feeSettings = feeSettingsDoc.data() || {};
+        const bonusTokens = feeSettings.newTenantBonusTokens || 0;
+
+        const userRecord = await adminAuth.createUser({ email, password, displayName: adminName });
+        newUser = userRecord;
+        const uid = newUser.uid;
+        
+        await adminAuth.setCustomUserClaims(uid, { role: 'admin' });
+
+        const batch = db.batch();
+        const newStoreRef = db.collection('stores').doc();
+        batch.set(newStoreRef, {
+            name: storeName,
+            location: pujaseraData.location || '',
+            pradanaTokenBalance: bonusTokens,
+            adminUids: [uid],
+            createdAt: new Date().toISOString(),
+            transactionCounter: 0,
+            firstTransactionDate: null,
+            pujaseraGroupSlug,
+            pujaseraName: pujaseraData.name || '',
+            isPosEnabled: true,
+            posMode: 'terpusat',
+        });
+
+        const userRef = db.collection('users').doc(uid);
+        batch.set(userRef, {
+            name: adminName,
+            email,
+            whatsapp,
+            role: 'admin',
+            status: 'active',
+            storeId: newStoreRef.id,
+        });
+
+        await batch.commit();
+        logger.info(`New tenant '${storeName}' and admin '${email}' created.`);
+        
+        // Enqueue notifications
+        const welcomeMessage = `🎉 *Selamat Datang di Chika POS, ${adminName}!* 🎉\n\nToko Anda *"${storeName}"* telah berhasil terdaftar di pujasera *${pujaseraData.name}* dengan bonus *${bonusTokens} Pradana Token*.\n\nSilakan login untuk mulai mengelola toko Anda.`;
+        const adminMessage = `*TENANT BARU BERGABUNG*\n\n*Pujasera:* ${pujaseraData.name}\n*Tenant Baru:* ${storeName}\n*Admin Tenant:* ${adminName}\n*Email:* ${email}\n\nBonus ${bonusTokens} token telah diberikan.`;
+        
+        const queueRef = db.collection('Pujaseraqueue');
+        await queueRef.add({ type: 'whatsapp-notification', payload: { to: whatsapp, message: welcomeMessage } });
+        await queueRef.add({ type: 'whatsapp-notification', payload: { to: 'admin_group', message: adminMessage, isGroup: true } });
+
+    } catch (error: any) {
+        if (newUser) {
+            await adminAuth.deleteUser(newUser.uid).catch(delErr => logger.error(`Failed to clean up orphaned user ${newUser?.uid}`, delErr));
+        }
+        logger.error('Error in handleTenantRegistration:', error);
+        throw error; // Re-throw to be caught by the main handler
+    }
 }
 
 
