@@ -1,16 +1,22 @@
+
 {
-  "name": "Kasir POS Chika F&B",
-  "short_name": "Chika F&B",
-  "description": "Aplikasi Kasir Cerdas dengan Fitur AI",
-  "start_url": "/",
+  "name": "Pujasera Chika AI",
+  "short_name": "Chika POS",
+  "description": "Aplikasi Kasir untuk Pujasera & Grup UMKM F&B",
+  "start_url": "/login",
   "display": "standalone",
-  "background_color": "#020817",
-  "theme_color": "#facc15",
+  "background_color": "#ffffff",
+  "theme_color": "#000000",
   "icons": [
     {
-      "src": "/icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml"
+      "src": "/icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
     }
   ]
 }

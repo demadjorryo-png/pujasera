@@ -9,7 +9,7 @@ import PwaInstaller from '@/components/Pwa-installer';
 
 export const metadata: Metadata = {
   title: 'Pujasera Chika AI',
-  description: 'Aplikasi Kasir untuk Semua Jenis Usaha F&B',
+  description: 'Aplikasi Kasir untuk Pujasera & Grup UMKM F&B',
 };
 
 export default function RootLayout({
