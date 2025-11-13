@@ -5,7 +5,6 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as logger from "firebase-functions/logger";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { initializeApp, getApps } from "firebase-admin/app";
-import { getAuth, UserRecord } from "firebase-admin/auth";
 import { subDays } from "date-fns";
 import { format } from "date-fns/format";
 import { id as idLocale } from "date-fns/locale";
@@ -16,7 +15,6 @@ if (getApps().length === 0) {
     initializeApp();
 }
 const db = getFirestore();
-const adminAuth = getAuth();
 
 
 interface WhatsappSettings {
@@ -57,10 +55,10 @@ async function internalSendWhatsapp(deviceId: string, target: string, message: s
         });
 
         if (!response.ok) {
-            const responseJson = await response.json();
+            const responseJson = await response.json() as { status?: string; reason?: string };
             logger.error('WhaCenter API HTTP Error:', { status: response.status, body: responseJson });
         } else {
-            const responseJson = await response.json();
+            const responseJson = await response.json() as { status?: string; reason?: string };
             if (responseJson.status === 'error') {
                 logger.error('WhaCenter API Error:', responseJson.reason);
             }
@@ -479,3 +477,5 @@ export const sendDailySalesSummary = onSchedule({
         logger.error("Error dalam fungsi terjadwal sendDailySalesSummary:", error);
     }
 });
+
+    
