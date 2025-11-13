@@ -6,28 +6,44 @@ import admin from 'firebase-admin';
  * It reads configuration from environment variables.
  */
 function initializeFirebaseAdmin() {
-  if (admin.apps.length === 0) {
-    // Check if the required environment variables are available.
-    const hasEnvVars = process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY;
+  // Check if the required environment variables are available.
+  const hasEnvVars =
+    process.env.FIREBASE_PROJECT_ID &&
+    process.env.FIREBASE_CLIENT_EMAIL &&
+    process.env.FIREBASE_PRIVATE_KEY;
 
+  if (admin.apps.length === 0) {
     if (hasEnvVars) {
       try {
         admin.initializeApp({
           credential: admin.credential.cert({
             projectId: process.env.FIREBASE_PROJECT_ID,
             clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-            privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+            privateKey: (process.env.FIREBASE_PRIVATE_KEY || '').replace(
+              /\\n/g,
+              '\n'
+            ),
           }),
         });
-        console.log("Firebase Admin SDK initialized successfully for Next.js server environment.");
+        console.log(
+          'Firebase Admin SDK initialized successfully for Next.js server environment.'
+        );
       } catch (error) {
-        console.error("Firebase admin initialization error from environment variables", error);
-        throw new Error("Could not initialize Firebase Admin SDK. Check server environment variables.");
+        console.error(
+          'Firebase admin initialization error from environment variables',
+          error
+        );
+        // We throw here because if this fails, no admin operation will succeed.
+        throw new Error(
+          'Could not initialize Firebase Admin SDK. Check server environment variables.'
+        );
       }
     } else {
-      // This will prevent the app from crashing in environments where env vars aren't set,
-      // but will cause API routes that need admin to fail.
-      console.warn("Firebase Admin SDK not initialized. Missing FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, or FIREBASE_PRIVATE_KEY environment variables.");
+      // In a production environment or any environment that relies on server-side
+      // Firebase Admin calls, this should be a critical failure.
+      throw new Error(
+        'Firebase Admin SDK could not be initialized. Missing FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, or FIREBASE_PRIVATE_KEY environment variables.'
+      );
     }
   }
 }
@@ -39,14 +55,11 @@ function initializeFirebaseAdmin() {
  * @returns An object containing the initialized `auth` and `db` services.
  */
 export function getFirebaseAdmin() {
-    initializeFirebaseAdmin(); // Ensure SDK is initialized on every call
-    
-    // Throw an error if initialization failed and the app continues.
-    if (admin.apps.length === 0) {
-        throw new Error("Firebase Admin SDK is not initialized. API Route cannot function.");
-    }
-    return {
-        auth: admin.auth(),
-        db: admin.firestore(),
-    };
+  initializeFirebaseAdmin(); // Ensure SDK is initialized on every call
+
+  // After ensuring initialization, we can safely return the services.
+  return {
+    auth: admin.auth(),
+    db: admin.firestore(),
+  };
 }
