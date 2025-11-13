@@ -33,6 +33,19 @@ async function internalSendWhatsapp(deviceId: string, target: string, message: s
     }
 }
 
+function formatWhatsappNumber(nomor: string | number): string {
+    if (!nomor) return '';
+    let nomorStr = String(nomor).replace(/\D/g, '');
+    if (nomorStr.startsWith('0')) {
+        return '62' + nomorStr.substring(1);
+    }
+    if (nomorStr.startsWith('8')) {
+        return '62' + nomorStr;
+    }
+    return nomorStr;
+}
+
+
 export async function POST(req: NextRequest) {
     const { auth, db } = getFirebaseAdmin();
     const authorization = req.headers.get('Authorization');
@@ -43,18 +56,24 @@ export async function POST(req: NextRequest) {
     
     try {
         const decodedToken = await auth.verifyIdToken(idToken);
-        const { uid, name } = decodedToken;
+        const { uid } = decodedToken;
         const { storeId, storeName, amount, tokensToAdd, uniqueCode, totalAmount, proofUrl } = await req.json();
 
         if (!storeId || !storeName || !amount || !tokensToAdd || !totalAmount || !proofUrl) {
             return NextResponse.json({ error: 'Missing required top-up data.' }, { status: 400 });
         }
+        
+        // Fetch user document to get name and WhatsApp number
+        const userDoc = await db.collection('users').doc(uid).get();
+        const userData = userDoc.data();
+        const userName = userData?.name || 'User';
+        const userWhatsapp = userData?.whatsapp || '';
 
         const newRequestData = {
             storeId,
             storeName,
             userId: uid,
-            userName: name || 'User',
+            userName: userName,
             amount,
             tokensToAdd,
             uniqueCode,
@@ -64,24 +83,34 @@ export async function POST(req: NextRequest) {
             requestedAt: new Date().toISOString(),
         };
 
-        // Directly write to the root collection 'topUpRequests' which triggers the Cloud Function
         const newRequestRef = await db.collection('topUpRequests').add(newRequestData);
 
         console.info(`Top-up request ${newRequestRef.id} submitted for store ${storeId}`);
 
-        // Send notification directly from API route
+        // --- Start Notification Logic ---
         const { deviceId, adminGroup } = getWhatsappSettings();
-        if (deviceId && adminGroup) {
+        if (deviceId) {
             const formattedAmount = (tokensToAdd || 0).toLocaleString('id-ID');
-            const adminMessage = `🔔 *Permintaan Top-up Baru*\n\nToko: *${storeName}*\nPengaju: *${name || 'N/A'}*\nJumlah: *${formattedAmount} token*\n\nMohon segera verifikasi di panel admin.\nBukti: ${proofUrl || 'Tidak ada'}`;
             
-            await internalSendWhatsapp(deviceId, adminGroup, adminMessage, true);
-            console.info(`Sent new top-up request notification for platform admin from API route.`);
-        } else {
-            console.warn("Admin WhatsApp notification for new top-up skipped: deviceId or adminGroup not configured.");
-        }
+            // 1. Notify Admin Group
+            if (adminGroup) {
+                const adminMessage = `🔔 *Permintaan Top-up Baru*\n\nToko: *${storeName}*\nPengaju: *${userName}*\nJumlah: *${formattedAmount} token*\n\nMohon segera verifikasi di panel admin.\nBukti: ${proofUrl || 'Tidak ada'}`;
+                await internalSendWhatsapp(deviceId, adminGroup, adminMessage, true);
+                console.info(`Sent new top-up request notification for platform admin from API route.`);
+            }
 
-        // The onTopUpRequestCreate function will handle syncing
+            // 2. Notify User
+            if (userWhatsapp) {
+                const userMessage = `✅ *Pengajuan Top-up Terkirim*\n\nHalo ${userName},\nPermintaan top-up Anda untuk *${storeName}* sejumlah *${formattedAmount} token* telah berhasil diajukan.\n\nKami akan segera memprosesnya setelah verifikasi. Anda akan menerima notifikasi lagi setelah saldo ditambahkan. Terima kasih!`;
+                const formattedUserPhone = formatWhatsappNumber(userWhatsapp);
+                await internalSendWhatsapp(deviceId, formattedUserPhone, userMessage, false);
+                console.info(`Sent top-up submission confirmation to user ${userName}.`);
+            }
+        } else {
+            console.warn("WhatsApp notifications skipped: deviceId not configured.");
+        }
+        // --- End Notification Logic ---
+
         return NextResponse.json({ success: true, message: 'Top-up request submitted successfully.' });
 
     } catch (error) {
