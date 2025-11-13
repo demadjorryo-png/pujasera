@@ -90,13 +90,13 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
     const handleAction = async (slice: TenantOrderSlice, action: 'complete' | 'ready') => {
         if (!activeStore) return;
         setProcessingId(slice.parentTransaction.id + slice.tenantStoreId);
-    
+
         try {
             if (action === 'complete') { // Action for Pujasera Admin/Cashier
                 await runTransaction(db, async (transaction) => {
                     const transactionRef = doc(db, 'stores', activeStore.id, 'transactions', slice.parentTransaction.id);
                     transaction.update(transactionRef, { status: 'Selesai' });
-    
+
                     if (slice.parentTransaction.tableId) {
                         const tableRef = doc(db, 'stores', activeStore.id, 'tables', slice.parentTransaction.tableId);
                         const tableDoc = await transaction.get(tableRef);
@@ -109,30 +109,30 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                         }
                     }
                 });
-    
-                toast({ title: 'Status Diperbarui!', description: `Pesanan untuk ${slice.parentTransaction.customerName} telah ditandai selesai.`});
-            
+
+                toast({ title: 'Status Diperbarui!', description: `Pesanan untuk ${slice.parentTransaction.customerName} telah ditandai selesai.` });
+
             } else if (action === 'ready') { // Action for Tenant Kitchen
-                // Find the specific sub-transaction document for the tenant
                 const q = query(
                     collection(db, 'stores', slice.tenantStoreId, 'transactions'),
                     where('parentTransactionId', '==', slice.parentTransaction.id)
                 );
+
                 const subTransactionSnapshot = await getDocs(q);
-    
+
                 if (subTransactionSnapshot.empty) {
                     throw new Error(`Sub-transaksi untuk tenant ${slice.tenantStoreName} dengan nota ${slice.parentTransaction.receiptNumber} tidak ditemukan.`);
                 }
                 const subTransactionRef = subTransactionSnapshot.docs[0].ref;
 
-                // We only need to update the sub-transaction. The Cloud Function will handle the rest.
+                // The Cloud Function will handle syncing this status back to the parent transaction.
                 await updateDoc(subTransactionRef, { status: 'Siap Diambil' });
-    
+
                 toast({ title: 'Status Diperbarui!', description: `Pesanan dari ${slice.tenantStoreName} telah ditandai siap.` });
             }
-    
+
             refreshData();
-    
+
         } catch (error) {
             console.error("Error processing kitchen action:", error);
             toast({
