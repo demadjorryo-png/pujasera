@@ -45,6 +45,7 @@ import { TopUpDialog } from '@/components/dashboard/top-up-dialog';
 import { Dialog, DialogTrigger } from '@/components/ui/dialog';
 import { useAuth } from '@/contexts/auth-context';
 import { ThemeSwitcher } from '@/components/dashboard/theme-switcher';
+import { FoodCourtIcon } from '@/components/icons/food-court-icon';
 
 type MainSidebarProps = {
   pradanaTokenBalance: number;
@@ -97,7 +98,7 @@ export function MainSidebar({ pradanaTokenBalance }: MainSidebarProps) {
     // --- PUJASERA GROUPS ---
     {
         group: 'Operasional Pujasera',
-        icon: <Store />,
+        icon: <FoodCourtIcon />,
         roles: ['pujasera_admin', 'pujasera_cashier'],
         items: [
             { view: 'pujasera-overview', label: 'Overview Pujasera', icon: <LayoutGrid />, roles: ['pujasera_admin'], tourId: 'sidebar-overview' },
