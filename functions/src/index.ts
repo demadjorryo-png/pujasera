@@ -5,6 +5,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as logger from "firebase-functions/logger";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { initializeApp, getApps } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
 import { subDays } from "date-fns";
 import { format } from "date-fns/format";
 import { id as idLocale } from "date-fns/locale";
@@ -418,4 +419,5 @@ export const sendDailySalesSummary = onSchedule({
         logger.error("Error dalam fungsi terjadwal sendDailySalesSummary:", error);
     }
 });
+
 
