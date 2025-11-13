@@ -103,14 +103,10 @@ async function handlePujaseraOrder(payload: any) {
     
     // Group items by tenant for distribution
     const itemsByTenant: { [key: string]: { storeName: string, items: CartItem[] } } = {};
-    const tenantDocs = await db.collection('stores').where('pujaseraGroupSlug', '==', pujaseraData.pujaseraGroupSlug).get();
-    const pujaseraTenants = tenantDocs.docs.map(doc => ({ id: doc.id, name: doc.data().name }));
-
     for (const item of cart) {
-        if (!item.storeId) continue;
-        const tenantStoreName = pujaseraTenants.find((t) => t.id === item.storeId)?.name || 'Tenant';
+        if (!item.storeId || !item.storeName) continue;
         if (!itemsByTenant[item.storeId]) {
-            itemsByTenant[item.storeId] = { storeName: tenantStoreName, items: [] };
+            itemsByTenant[item.storeId] = { storeName: item.storeName, items: [] };
         }
         itemsByTenant[item.storeId].items.push(item);
     }
@@ -152,14 +148,16 @@ async function handlePujaseraOrder(payload: any) {
             storeId: tenantId,
             customerId: customer.id,
             customerName: customer.name,
-            staffId: staffId,
             createdAt: newTransactionData.createdAt,
             items: tenantItems,
-            subtotal: tenantSubtotal, taxAmount: 0, serviceFeeAmount: 0, discountAmount: 0,
+            subtotal: tenantSubtotal, 
+            taxAmount: 0, // Handled at pujasera level
+            serviceFeeAmount: 0, // Handled at pujasera level
+            discountAmount: 0, // Handled at pujasera level
             totalAmount: tenantSubtotal,
-            paymentMethod,
             status: 'Diproses',
-            pointsEarned: 0, pointsRedeemed: 0,
+            pointsEarned: 0, 
+            pointsRedeemed: 0,
             notes: `Bagian dari pesanan pujasera #${String(newReceiptNumber).padStart(6, '0')}`,
             parentTransactionId: newTxRef.id,
             pujaseraId: pujaseraId,
