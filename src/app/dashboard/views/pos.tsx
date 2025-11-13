@@ -33,6 +33,7 @@ import {
   Store as StoreIcon,
   Share2,
   QrCode,
+  Loader2,
 } from 'lucide-react';
 import Image from 'next/image';
 import { Separator } from '@/components/ui/separator';
@@ -410,93 +411,57 @@ export default function POS({ onPrintRequest }: POSProps) {
   const handleCheckout = async (isPaid: boolean) => {
     setConfirmationAction(null);
     if (cart.length === 0) {
-      toast({ variant: 'destructive', title: 'Keranjang Kosong', description: 'Silakan tambahkan produk ke keranjang.' });
+      toast({ variant: 'destructive', title: 'Keranjang Kosong' });
       return;
     }
     if (!currentUser || !activeStore) {
-      toast({ variant: 'destructive', title: 'Sesi atau Toko Tidak Valid', description: 'Data staff atau toko tidak ditemukan.' });
+      toast({ variant: 'destructive', title: 'Sesi atau Toko Tidak Valid' });
       return;
     }
-
+    
     if (pradanaTokenBalance < transactionFee) {
-      toast({
-        variant: 'destructive',
-        title: 'Saldo Token Tidak Cukup',
-        description: `Transaksi ini memerlukan ${transactionFee.toFixed(2)} token, tetapi saldo toko Anda hanya ${pradanaTokenBalance.toFixed(2)}. Silakan top up.`
-      });
-      return;
+        toast({
+          variant: 'destructive',
+          title: 'Saldo Token Tidak Cukup',
+          description: `Transaksi ini memerlukan ${transactionFee.toFixed(2)} token, tetapi saldo Anda hanya ${pradanaTokenBalance.toFixed(2)}. Silakan top up.`
+        });
+        return;
     }
 
     setIsProcessingCheckout(true);
+
+    const payload = {
+        pujaseraId: activeStore.id,
+        customer: selectedCustomer || { id: 'N/A', name: 'Guest' },
+        cart: cart,
+        subtotal, taxAmount, serviceFeeAmount, totalAmount,
+        paymentMethod: isPaid ? paymentMethod : 'Belum Dibayar',
+        staffId: currentUser.id,
+        pointsEarned, pointsRedeemed,
+        tableId, tableName,
+    };
     
-    // For pujasera context, the transaction is associated with the pujasera's store ID
-    const transactionStoreId = activeStore.id;
-    const finalPaymentMethod = isPaid ? paymentMethod : 'Belum Dibayar';
-    const finalStatus = isPujaseraContext ? 'Diproses' : (isPaid ? 'Selesai Dibayar' : 'Belum Dibayar');
-
     try {
-        const batch = writeBatch(db);
-
-        const pujaseraStoreRef = doc(db, 'stores', transactionStoreId);
-        const pujaseraStoreDoc = await getDoc(pujaseraStoreRef);
-        if (!pujaseraStoreDoc.exists()) throw new Error("Toko pujasera tidak ditemukan.");
+        await addDoc(collection(db, 'whatsappQueue'), {
+            type: 'pujasera-order',
+            payload: payload,
+            createdAt: serverTimestamp(),
+        });
         
-        const pujaseraCounter = pujaseraStoreDoc.data().transactionCounter || 0;
-        const pujaseraReceiptNumber = pujaseraCounter + 1;
-        batch.update(pujaseraStoreRef, { transactionCounter: increment(1) });
-        
-        const newMainTransactionData: Omit<Transaction, 'id'> = {
-            receiptNumber: pujaseraReceiptNumber,
-            storeId: transactionStoreId,
-            customerId: selectedCustomer?.id || 'N/A',
-            customerName: selectedCustomer?.name || 'Guest',
-            staffId: currentUser.id,
-            createdAt: new Date().toISOString(),
-            items: cart, // The full cart
-            subtotal, taxAmount, serviceFeeAmount, discountAmount, totalAmount,
-            paymentMethod: finalPaymentMethod,
-            status: finalStatus,
-            pointsEarned, 
-            pointsRedeemed: pointsToRedeem,
-            tableId: tableId || undefined,
-            pujaseraGroupSlug: activeStore.pujaseraGroupSlug
-        };
+        toast({ title: "Pesanan Dikirim!", description: "Pesanan Anda telah dikirim ke sistem untuk diproses." });
 
-        const newTxRef = doc(collection(db, 'stores', transactionStoreId, 'transactions'));
-        batch.set(newTxRef, newMainTransactionData);
-        
-        const finalTransactionData: Transaction = { id: newTxRef.id, ...newMainTransactionData };
-
-        // Update table status if a table is selected
-        if (tableId) {
-            const tableRef = doc(db, 'stores', transactionStoreId, 'tables', tableId);
-            batch.update(tableRef, { status: 'Terisi' });
-        }
-
-        // The Cloud Function `onPujaseraTransactionCreate` will handle the rest of the logic.
-        await batch.commit();
-
-        toast({ title: "Transaksi Berhasil!", description: "Pesanan telah dikirim untuk diproses oleh sistem." });
-
-        if (isPaid) {
-            onPrintRequest(finalTransactionData);
-        }
-
-        refreshPradanaTokenBalance();
+        refreshData();
         setCart([]);
         setDiscountValue(0);
         setPointsToRedeem(0);
         setSelectedCustomer(undefined);
-        refreshData();
-        
-        router.push('/dashboard?view=transactions');
+        router.push('/dashboard?view=kitchen');
 
     } catch (error) {
-      console.error("Checkout failed:", error);
-      const errorMessage = error instanceof Error ? error.message : "Terjadi kesalahan yang tidak diketahui.";
-      toast({ variant: 'destructive', title: 'Checkout Gagal', description: errorMessage });
+        console.error("Checkout failed:", error);
+        toast({ variant: 'destructive', title: 'Checkout Gagal', description: (error as Error).message });
     } finally {
-      setIsProcessingCheckout(false);
+        setIsProcessingCheckout(false);
     }
   }
 
@@ -891,7 +856,7 @@ export default function POS({ onPrintRequest }: POSProps) {
                         ? `Anda akan menyelesaikan transaksi dengan total Rp ${totalAmount.toLocaleString('id-ID')}.`
                         : `Anda akan membuat transaksi 'Bayar Nanti' dengan total Rp ${totalAmount.toLocaleString('id-ID')}.`
                     }
-                    {isPujaseraContext && confirmationAction?.isPaid && " Pesanan akan didistribusikan ke dapur tenant terkait."}
+                    {isPujaseraContext && confirmationAction?.isPaid && " Pesanan akan dikirimkan ke sistem untuk diproses oleh masing-masing tenant."}
                     <br/><br/>
                     Pastikan detail pesanan sudah benar. Lanjutkan?
                 </AlertDialogDescription>
