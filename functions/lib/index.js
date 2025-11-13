@@ -1,18 +1,21 @@
-
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.sendDailySalesSummary = exports.onTopUpRequestUpdate = exports.onTopUpRequestCreate = exports.onPujaseraTransactionCreate = exports.processWhatsappQueue = void 0;
+exports.sendDailySalesSummary = exports.onTopUpRequestUpdate = exports.onTopUpRequestCreate = exports.onTenantTransactionUpdate = exports.processPujaseraQueue = void 0;
 const firestore_1 = require("firebase-functions/v2/firestore");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
 const logger = require("firebase-functions/logger");
 const firestore_2 = require("firebase-admin/firestore");
 const app_1 = require("firebase-admin/app");
+const auth_1 = require("firebase-admin/auth");
 const date_fns_1 = require("date-fns");
 const format_1 = require("date-fns/format");
 const locale_1 = require("date-fns/locale");
-// Initialize Firebase Admin SDK
-(0, app_1.initializeApp)();
+// Initialize Firebase Admin SDK if not already initialized
+if ((0, app_1.getApps)().length === 0) {
+    (0, app_1.initializeApp)();
+}
 const db = (0, firestore_2.getFirestore)();
+const adminAuth = (0, auth_1.getAuth)();
 /**
  * Retrieves WhatsApp settings directly from environment variables.
  */
@@ -27,153 +30,326 @@ function getWhatsappSettings() {
     }
     return { deviceId, adminGroup };
 }
-exports.processWhatsappQueue = (0, firestore_1.onDocumentCreated)("whatsappQueue/{messageId}", async (event) => {
+/**
+ * Main function to handle all queued tasks.
+ * It now orchestrates order processing, distribution, and WhatsApp notifications.
+ */
+exports.processPujaseraQueue = (0, firestore_1.onDocumentCreated)("Pujaseraqueue/{jobId}", async (event) => {
     const snapshot = event.data;
     if (!snapshot) {
         logger.info("No data associated with the event, exiting.");
         return;
     }
-    const messageData = snapshot.data();
-    const { to, message, isGroup = false } = messageData;
-    if (!to || !message) {
-        logger.error("Document is missing 'to' or 'message' field.", { id: snapshot.id });
-        return snapshot.ref.update({ status: 'failed', error: 'Missing to/message field' });
-    }
+    const jobData = snapshot.data();
+    const { type, payload } = jobData;
     try {
-        const { deviceId, adminGroup } = getWhatsappSettings();
-        if (!deviceId) {
-            throw new Error("WhatsApp deviceId is not configured in environment variables.");
+        switch (type) {
+            case 'pujasera-order':
+                await handlePujaseraOrder(payload);
+                await snapshot.ref.update({ status: 'completed', processedAt: firestore_2.FieldValue.serverTimestamp() });
+                break;
+            case 'whatsapp-notification':
+                await handleWhatsappNotification(payload);
+                await snapshot.ref.update({ status: 'sent', processedAt: firestore_2.FieldValue.serverTimestamp() });
+                break;
+            case 'pujasera-registration':
+                await handlePujaseraRegistration(payload);
+                await snapshot.ref.update({ status: 'completed', processedAt: firestore_2.FieldValue.serverTimestamp() });
+                break;
+            case 'tenant-registration':
+                await handleTenantRegistration(payload);
+                await snapshot.ref.update({ status: 'completed', processedAt: firestore_2.FieldValue.serverTimestamp() });
+                break;
+            default:
+                logger.warn(`Unknown job type: ${type}`);
+                await snapshot.ref.update({ status: 'unknown_type', error: `Unknown job type: ${type}` });
         }
-        const recipient = (to === 'admin_group' && isGroup) ? adminGroup : to;
-        if (!recipient) {
-            throw new Error(`Recipient is invalid. 'to' field was '${to}' and adminGroup is not set.`);
-        }
-        const fetch = (await Promise.resolve().then(() => require('node-fetch'))).default;
-        const body = new URLSearchParams();
-        body.append('device_id', deviceId);
-        body.append(isGroup ? 'group' : 'number', recipient);
-        body.append('message', message);
-        const endpoint = isGroup ? 'sendGroup' : 'send';
-        const webhookUrl = `https://app.whacenter.com/api/${endpoint}`;
-        const response = await fetch(webhookUrl, {
-            method: 'POST',
-            body: body,
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-        });
-        const responseJson = await response.json();
-        if (!response.ok || responseJson.status === 'error') {
-            throw new Error(responseJson.reason || `WhaCenter API error with status ${response.status}`);
-        }
-        logger.info(`Successfully sent WhatsApp message via queue to ${recipient}`);
-        return snapshot.ref.update({ status: 'sent', sentAt: firestore_2.FieldValue.serverTimestamp() });
     }
     catch (error) {
-        logger.error(`Failed to process WhatsApp message for recipient '${to}':`, error);
-        return snapshot.ref.update({ status: 'failed', error: error.message, processedAt: firestore_2.FieldValue.serverTimestamp() });
+        logger.error(`Failed to process job ${snapshot.id} of type ${type}:`, error);
+        await snapshot.ref.update({ status: 'failed', error: error.message, processedAt: firestore_2.FieldValue.serverTimestamp() });
     }
 });
-/**
- * Triggers when a new Pujasera transaction is created.
- * This function handles the distribution of orders to individual tenants.
- */
-exports.onPujaseraTransactionCreate = (0, firestore_1.onDocumentCreated)("stores/{pujaseraId}/transactions/{transactionId}", async (event) => {
-    var _a, _b, _c, _d;
-    const transactionSnapshot = event.data;
-    if (!transactionSnapshot) {
-        logger.info("No data for onPujaseraTransactionCreate event, exiting.");
-        return;
+async function handlePujaseraOrder(payload) {
+    var _a, _b, _c, _d, _e;
+    const { pujaseraId, customer, cart, subtotal, taxAmount, serviceFeeAmount, totalAmount, paymentMethod, staffId, pointsEarned, pointsRedeemed, tableId, isFromCatalog } = payload;
+    if (!pujaseraId || !customer || !cart || cart.length === 0) {
+        throw new Error("Data pesanan tidak lengkap.");
     }
-    const transactionData = transactionSnapshot.data();
-    const pujaseraId = event.params.pujaseraId;
-    // Only proceed if this transaction is for a pujasera group and is marked 'Diproses'
-    if (!transactionData.pujaseraGroupSlug || transactionData.status !== 'Diproses') {
-        return;
-    }
-    logger.info(`Processing pujasera transaction ${transactionSnapshot.id} for distribution.`);
     const batch = db.batch();
-    try {
-        // Group items by their original tenant storeId
-        const itemsByTenant = {};
-        for (const item of transactionData.items) {
-            if (!item.storeId)
-                continue;
-            if (!itemsByTenant[item.storeId]) {
-                itemsByTenant[item.storeId] = [];
-            }
-            itemsByTenant[item.storeId].push(item);
+    const pujaseraStoreRef = db.doc(`stores/${pujaseraId}`);
+    const pujaseraStoreDoc = await pujaseraStoreRef.get();
+    if (!pujaseraStoreDoc.exists)
+        throw new Error("Pujasera tidak ditemukan.");
+    const pujaseraData = pujaseraStoreDoc.data();
+    const pujaseraCounter = pujaseraData.transactionCounter || 0;
+    const newReceiptNumber = pujaseraCounter + 1;
+    // Group items by tenant for distribution
+    const itemsByTenant = {};
+    const tenantDocs = await db.collection('stores').where('pujaseraGroupSlug', '==', pujaseraData.pujaseraGroupSlug).get();
+    const pujaseraTenants = tenantDocs.docs.map(doc => ({ id: doc.id, name: doc.data().name }));
+    for (const item of cart) {
+        if (!item.storeId)
+            continue;
+        const tenantStoreName = ((_a = pujaseraTenants.find((t) => t.id === item.storeId)) === null || _a === void 0 ? void 0 : _a.name) || 'Tenant';
+        if (!itemsByTenant[item.storeId]) {
+            itemsByTenant[item.storeId] = { storeName: tenantStoreName, items: [] };
         }
-        // Fetch all tenants' data in parallel to get their current transaction counters
-        const tenantRefs = Object.keys(itemsByTenant).map(tenantId => db.doc(`stores/${tenantId}`));
-        const tenantDocs = await db.getAll(...tenantRefs);
-        const tenantDataMap = new Map(tenantDocs.map(doc => [doc.id, doc.data()]));
-        // Create a sub-transaction for each tenant
-        for (const tenantId in itemsByTenant) {
-            const tenantData = tenantDataMap.get(tenantId);
-            if (!tenantData) {
-                logger.warn(`Tenant data for ID ${tenantId} not found, skipping distribution for these items.`);
-                continue;
-            }
-            const tenantItems = itemsByTenant[tenantId];
-            const tenantSubtotal = tenantItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
-            const tenantTransactionData = {
-                receiptNumber: transactionData.receiptNumber, // Use the SAME receipt number
-                storeId: tenantId,
-                customerId: transactionData.customerId,
-                customerName: transactionData.customerName,
-                staffId: transactionData.staffId, // The pujasera cashier who processed
-                createdAt: transactionData.createdAt,
-                items: tenantItems,
-                subtotal: tenantSubtotal,
-                taxAmount: 0, // Tax is handled at the central level
-                serviceFeeAmount: 0, // Service fee is handled at the central level
-                discountAmount: 0, // Discount is handled at the central level
-                totalAmount: tenantSubtotal, // Total for this tenant's items only
-                paymentMethod: 'Lunas (Pusat)',
-                status: 'Diproses', // This will appear in the tenant's kitchen view
-                pointsEarned: 0, // Points are handled at the central level
-                pointsRedeemed: 0, // Points are handled at the central level
-                notes: `Bagian dari pesanan pujasera #${String(transactionData.receiptNumber).padStart(6, '0')}`
-            };
-            const newTenantTransactionRef = db.collection('stores').doc(tenantId).collection('transactions').doc();
-            batch.set(newTenantTransactionRef, tenantTransactionData);
-        }
-        // Update customer points if applicable
-        if (transactionData.customerId !== 'N/A' && (transactionData.pointsEarned > 0 || transactionData.pointsRedeemed > 0)) {
-            const customerRef = db.collection('stores').doc(pujaseraId).collection('customers').doc(transactionData.customerId);
-            const pointsChange = (transactionData.pointsEarned || 0) - (transactionData.pointsRedeemed || 0);
-            batch.update(customerRef, { loyaltyPoints: firestore_2.FieldValue.increment(pointsChange) });
-        }
-        // Update pujasera transaction counter and token balance
-        const settingsDoc = await db.doc('appSettings/transactionFees').get();
-        const feeSettings = settingsDoc.data() || {};
-        const feePercentage = (_a = feeSettings.feePercentage) !== null && _a !== void 0 ? _a : 0.005;
-        const minFeeRp = (_b = feeSettings.minFeeRp) !== null && _b !== void 0 ? _b : 500;
-        const maxFeeRp = (_c = feeSettings.maxFeeRp) !== null && _c !== void 0 ? _c : 2500;
-        const tokenValueRp = (_d = feeSettings.tokenValueRp) !== null && _d !== void 0 ? _d : 1000;
-        const feeFromPercentage = transactionData.totalAmount * feePercentage;
-        const feeCappedAtMin = Math.max(feeFromPercentage, minFeeRp);
-        const feeCappedAtMax = Math.min(feeCappedAtMin, maxFeeRp);
-        const transactionFee = feeCappedAtMax / tokenValueRp;
-        // The main transaction counter is already incremented when the main transaction is created.
-        // This function should ONLY deduct tokens.
-        batch.update(db.doc(`stores/${pujaseraId}`), {
-            pradanaTokenBalance: firestore_2.FieldValue.increment(-transactionFee)
+        itemsByTenant[item.storeId].items.push(item);
+    }
+    // Main Transaction
+    const newTxRef = db.collection('stores').doc(pujaseraId).collection('transactions').doc();
+    const newTransactionData = {
+        receiptNumber: newReceiptNumber,
+        storeId: pujaseraId,
+        customerId: customer.id || 'N/A',
+        customerName: customer.name || 'Guest',
+        staffId: staffId || 'catalog-system',
+        createdAt: new Date().toISOString(),
+        items: cart,
+        subtotal, taxAmount, serviceFeeAmount, discountAmount: 0,
+        totalAmount,
+        paymentMethod,
+        status: 'Diproses',
+        pointsEarned: pointsEarned || 0,
+        pointsRedeemed: pointsRedeemed || 0,
+        tableId: tableId || undefined,
+        pujaseraGroupSlug: pujaseraData.pujaseraGroupSlug,
+        notes: isFromCatalog ? 'Pesanan dari Katalog Publik' : '',
+        itemsStatus: {} // Initialize status tracking
+    };
+    newTransactionData.itemsStatus = Object.keys(itemsByTenant).reduce((acc, tenantId) => (Object.assign(Object.assign({}, acc), { [tenantId]: 'Diproses' })), {});
+    batch.set(newTxRef, newTransactionData);
+    // Create sub-transactions for each tenant
+    for (const tenantId in itemsByTenant) {
+        const tenantInfo = itemsByTenant[tenantId];
+        const tenantItems = tenantInfo.items;
+        const tenantSubtotal = tenantItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+        const newTenantTransactionRef = db.collection('stores').doc(tenantId).collection('transactions').doc();
+        batch.set(newTenantTransactionRef, {
+            receiptNumber: newReceiptNumber,
+            storeId: tenantId,
+            customerId: customer.id,
+            customerName: customer.name,
+            staffId: staffId,
+            createdAt: newTransactionData.createdAt,
+            items: tenantItems,
+            subtotal: tenantSubtotal, taxAmount: 0, serviceFeeAmount: 0, discountAmount: 0,
+            totalAmount: tenantSubtotal,
+            paymentMethod,
+            status: 'Diproses',
+            pointsEarned: 0, pointsRedeemed: 0,
+            notes: `Bagian dari pesanan pujasera #${String(newReceiptNumber).padStart(6, '0')}`,
+            parentTransactionId: newTxRef.id,
+            pujaseraId: pujaseraId,
         });
-        // Finally, clear the virtual table if it was a catalog order.
-        // For physical tables, wait for the 'complete' action in the kitchen view.
-        if (transactionData.tableId) {
-            const tableRef = db.doc(`stores/${pujaseraId}/tables/${transactionData.tableId}`);
-            const tableDoc = await tableRef.get();
-            if (tableDoc.exists && tableDoc.data()?.isVirtual) {
-                batch.delete(tableRef);
+    }
+    // Handle table updates if it's a catalog order to be paid at cashier
+    if (isFromCatalog && paymentMethod === 'kasir' && tableId) {
+        const tableRef = db.doc(`stores/${pujaseraId}/tables/${tableId}`);
+        batch.update(tableRef, {
+            'currentOrder.transactionId': newTxRef.id
+        });
+    }
+    else if (tableId) { // For POS orders
+        const tableRef = db.doc(`stores/${pujaseraId}/tables/${tableId}`);
+        batch.update(tableRef, {
+            status: 'Terisi',
+            currentOrder: {
+                items: cart,
+                totalAmount: totalAmount,
+                orderTime: newTransactionData.createdAt,
+                transactionId: newTxRef.id
             }
-        }
+        });
+    }
+    // Handle token deduction
+    const settingsDoc = await db.doc('appSettings/transactionFees').get();
+    const feeSettings = settingsDoc.data() || {};
+    const feePercentage = (_b = feeSettings.feePercentage) !== null && _b !== void 0 ? _b : 0.005;
+    const minFeeRp = (_c = feeSettings.minFeeRp) !== null && _c !== void 0 ? _c : 500;
+    const maxFeeRp = (_d = feeSettings.maxFeeRp) !== null && _d !== void 0 ? _d : 2500;
+    const tokenValueRp = (_e = feeSettings.tokenValueRp) !== null && _e !== void 0 ? _e : 1000;
+    const feeFromPercentage = totalAmount * feePercentage;
+    const feeCappedAtMin = Math.max(feeFromPercentage, minFeeRp);
+    const feeCappedAtMax = Math.min(feeCappedAtMin, maxFeeRp);
+    const transactionFee = feeCappedAtMax / tokenValueRp;
+    batch.update(pujaseraStoreRef, {
+        transactionCounter: firestore_2.FieldValue.increment(1),
+        pradanaTokenBalance: firestore_2.FieldValue.increment(-transactionFee)
+    });
+    await batch.commit();
+}
+async function handleWhatsappNotification(payload) {
+    const { to, message, isGroup = false } = payload;
+    if (!to || !message) {
+        throw new Error("Payload is missing 'to' or 'message' field.");
+    }
+    const { deviceId, adminGroup } = getWhatsappSettings();
+    if (!deviceId) {
+        throw new Error("WhatsApp deviceId is not configured in environment variables.");
+    }
+    const recipient = (to === 'admin_group' && isGroup) ? adminGroup : to;
+    if (!recipient) {
+        throw new Error(`Recipient is invalid. 'to' field was '${to}' and adminGroup is not set.`);
+    }
+    const fetch = (await Promise.resolve().then(() => require('node-fetch'))).default;
+    const body = new URLSearchParams();
+    body.append('device_id', deviceId);
+    body.append(isGroup ? 'group' : 'number', recipient);
+    body.append('message', message);
+    const endpoint = isGroup ? 'sendGroup' : 'send';
+    const webhookUrl = `https://app.whacenter.com/api/${endpoint}`;
+    const response = await fetch(webhookUrl, {
+        method: 'POST',
+        body: body,
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    });
+    const responseJson = await response.json();
+    if (!response.ok || responseJson.status === 'error') {
+        throw new Error(responseJson.reason || `WhaCenter API error with status ${response.status}`);
+    }
+    logger.info(`Successfully sent WhatsApp message via queue to ${recipient}`);
+}
+async function handlePujaseraRegistration(payload) {
+    const { pujaseraName, pujaseraLocation, adminName, email, whatsapp, password, referralCode } = payload;
+    let newUser = null;
+    try {
+        const feeSettingsDoc = await db.doc('appSettings/transactionFees').get();
+        const feeSettings = feeSettingsDoc.data() || {};
+        const bonusTokens = feeSettings.newPujaseraBonusTokens || 0;
+        const userRecord = await adminAuth.createUser({ email, password, displayName: adminName });
+        newUser = userRecord;
+        const uid = newUser.uid;
+        const pujaseraGroupSlug = pujaseraName.toLowerCase().replace(/\s+/g, '-').replace(/[^\w\-]+/g, '').replace(/\-\-+/g, '-').replace(/^-+/, '').replace(/-+$/, '') + '-' + Math.random().toString(36).substring(2, 7);
+        const primaryStoreIdForAdmin = uid;
+        await adminAuth.setCustomUserClaims(uid, { role: 'pujasera_admin', pujaseraGroupSlug });
+        const batch = db.batch();
+        const storeRef = db.collection('stores').doc(primaryStoreIdForAdmin);
+        batch.set(storeRef, {
+            name: pujaseraName,
+            location: pujaseraLocation,
+            pradanaTokenBalance: bonusTokens,
+            adminUids: [uid],
+            createdAt: new Date().toISOString(),
+            transactionCounter: 0,
+            firstTransactionDate: null,
+            referralCode: referralCode || '',
+            pujaseraName,
+            pujaseraLocation,
+            pujaseraGroupSlug,
+            catalogSlug: pujaseraGroupSlug,
+            isPosEnabled: true,
+        });
+        const userRef = db.collection('users').doc(uid);
+        batch.set(userRef, {
+            name: adminName,
+            email,
+            whatsapp,
+            role: 'pujasera_admin',
+            status: 'active',
+            storeId: primaryStoreIdForAdmin,
+            pujaseraGroupSlug,
+        });
         await batch.commit();
-        logger.info(`Successfully distributed transaction ${transactionSnapshot.id} to ${Object.keys(itemsByTenant).length} tenants.`);
+        logger.info(`New pujasera group and admin created for ${email}`);
+        // Enqueue notifications
+        const welcomeMessage = `🎉 *Selamat Datang di Chika POS, ${adminName}!* 🎉\n\nGrup Pujasera Anda *"${pujaseraName}"* telah berhasil dibuat dengan bonus *${bonusTokens} Pradana Token*.\n\nSilakan login untuk mulai mengelola pujasera Anda.`;
+        const adminMessage = `*PENDAFTARAN PUJASERA BARU*\n\n*Pujasera:* ${pujaseraName}\n*Lokasi:* ${pujaseraLocation}\n*Admin:* ${adminName}\n*Email:* ${email}\n*WhatsApp:* ${whatsapp}\n\nBonus ${bonusTokens} token telah diberikan.`;
+        const queueRef = db.collection('Pujaseraqueue');
+        await queueRef.add({ type: 'whatsapp-notification', payload: { to: whatsapp, message: welcomeMessage } });
+        await queueRef.add({ type: 'whatsapp-notification', payload: { to: 'admin_group', message: adminMessage, isGroup: true } });
     }
     catch (error) {
-        logger.error(`Error processing pujasera transaction ${transactionSnapshot.id}:`, error);
-        // Optionally, update the transaction status to 'failed_distribution'
+        if (newUser) {
+            await adminAuth.deleteUser(newUser.uid).catch(delErr => logger.error(`Failed to clean up orphaned user ${newUser === null || newUser === void 0 ? void 0 : newUser.uid}`, delErr));
+        }
+        logger.error('Error in handlePujaseraRegistration:', error);
+        throw error; // Re-throw to be caught by the main handler
+    }
+}
+async function handleTenantRegistration(payload) {
+    const { storeName, adminName, email, whatsapp, password, pujaseraGroupSlug } = payload;
+    let newUser = null;
+    try {
+        const pujaseraQuery = db.collection('stores').where('pujaseraGroupSlug', '==', pujaseraGroupSlug).limit(1);
+        const pujaseraSnapshot = await pujaseraQuery.get();
+        if (pujaseraSnapshot.empty) {
+            throw new Error('Grup pujasera tidak ditemukan.');
+        }
+        const pujaseraData = pujaseraSnapshot.docs[0].data();
+        const feeSettingsDoc = await db.doc('appSettings/transactionFees').get();
+        const feeSettings = feeSettingsDoc.data() || {};
+        const bonusTokens = feeSettings.newTenantBonusTokens || 0;
+        const userRecord = await adminAuth.createUser({ email, password, displayName: adminName });
+        newUser = userRecord;
+        const uid = newUser.uid;
+        await adminAuth.setCustomUserClaims(uid, { role: 'admin' });
+        const batch = db.batch();
+        const newStoreRef = db.collection('stores').doc();
+        batch.set(newStoreRef, {
+            name: storeName,
+            location: pujaseraData.location || '',
+            pradanaTokenBalance: bonusTokens,
+            adminUids: [uid],
+            createdAt: new Date().toISOString(),
+            transactionCounter: 0,
+            firstTransactionDate: null,
+            pujaseraGroupSlug,
+            pujaseraName: pujaseraData.name || '',
+            isPosEnabled: true,
+            posMode: 'terpusat',
+        });
+        const userRef = db.collection('users').doc(uid);
+        batch.set(userRef, {
+            name: adminName,
+            email,
+            whatsapp,
+            role: 'admin',
+            status: 'active',
+            storeId: newStoreRef.id,
+        });
+        await batch.commit();
+        logger.info(`New tenant '${storeName}' and admin '${email}' created.`);
+        // Enqueue notifications
+        const welcomeMessage = `🎉 *Selamat Datang di Chika POS, ${adminName}!* 🎉\n\nToko Anda *"${storeName}"* telah berhasil terdaftar di pujasera *${pujaseraData.name}* dengan bonus *${bonusTokens} Pradana Token*.\n\nSilakan login untuk mulai mengelola toko Anda.`;
+        const adminMessage = `*TENANT BARU BERGABUNG*\n\n*Pujasera:* ${pujaseraData.name}\n*Tenant Baru:* ${storeName}\n*Admin Tenant:* ${adminName}\n*Email:* ${email}\n\nBonus ${bonusTokens} token telah diberikan.`;
+        const queueRef = db.collection('Pujaseraqueue');
+        await queueRef.add({ type: 'whatsapp-notification', payload: { to: whatsapp, message: welcomeMessage } });
+        await queueRef.add({ type: 'whatsapp-notification', payload: { to: 'admin_group', message: adminMessage, isGroup: true } });
+    }
+    catch (error) {
+        if (newUser) {
+            await adminAuth.deleteUser(newUser.uid).catch(delErr => logger.error(`Failed to clean up orphaned user ${newUser === null || newUser === void 0 ? void 0 : newUser.uid}`, delErr));
+        }
+        logger.error('Error in handleTenantRegistration:', error);
+        throw error; // Re-throw to be caught by the main handler
+    }
+}
+/**
+ * Triggers when a tenant updates their transaction status.
+ * Syncs the "Siap Diambil" status back to the main pujasera transaction.
+ */
+exports.onTenantTransactionUpdate = (0, firestore_1.onDocumentUpdated)("stores/{tenantId}/transactions/{transactionId}", async (event) => {
+    var _a, _b;
+    const before = (_a = event.data) === null || _a === void 0 ? void 0 : _a.before.data();
+    const after = (_b = event.data) === null || _b === void 0 ? void 0 : _b.after.data();
+    if (!before || !after ||
+        !(before.status === 'Diproses' && after.status === 'Siap Diambil') ||
+        !after.parentTransactionId || !after.pujaseraId) {
+        return;
+    }
+    const { parentTransactionId, pujaseraId, storeId } = after;
+    logger.info(`Tenant ${storeId} marked order for parent tx ${parentTransactionId} as ready. Syncing status.`);
+    const mainTransactionRef = db.doc(`stores/${pujaseraId}/transactions/${parentTransactionId}`);
+    try {
+        await mainTransactionRef.update({
+            [`itemsStatus.${storeId}`]: 'Siap Diambil'
+        });
+        logger.info(`Successfully synced 'Siap Diambil' status for tenant ${storeId} to main transaction ${parentTransactionId}.`);
+    }
+    catch (error) {
+        logger.error(`Error syncing status for tx ${parentTransactionId}:`, error);
     }
 });
 /**
@@ -192,20 +368,20 @@ exports.onTopUpRequestCreate = (0, firestore_1.onDocumentCreated)("topUpRequests
         logger.error("Top-up request is missing 'storeId' or 'storeName'.", { id: snapshot.id });
         return;
     }
-    const whatsappQueueRef = db.collection('whatsappQueue');
+    const whatsappQueueRef = db.collection('Pujaseraqueue');
     try {
-        // Path to the subcollection in the store document for history
         const historyRef = db.collection('stores').doc(storeId).collection('topUpRequests').doc(snapshot.id);
-        // 1. Sync the data to the store's subcollection
         await historyRef.set(requestData);
         logger.info(`Synced top-up request ${snapshot.id} to store ${storeId}`);
-        // 2. Send notification to the appropriate admin group
         const formattedAmount = (tokensToAdd || 0).toLocaleString('id-ID');
         const adminMessage = `🔔 *Permintaan Top-up Baru*\n\nToko: *${storeName}*\nPengaju: *${userName || 'N/A'}*\nJumlah: *${formattedAmount} token*\n\nMohon segera verifikasi di panel admin.\nBukti: ${proofUrl || 'Tidak ada'}`;
         await whatsappQueueRef.add({
-            to: 'admin_group', // This will be resolved to the env var group by processWhatsappQueue
-            message: adminMessage,
-            isGroup: true,
+            type: 'whatsapp-notification',
+            payload: {
+                to: 'admin_group',
+                message: adminMessage,
+                isGroup: true,
+            },
             createdAt: firestore_2.FieldValue.serverTimestamp(),
         });
         logger.info(`Queued new top-up request notification for platform admin.`);
@@ -226,7 +402,6 @@ exports.onTopUpRequestUpdate = (0, firestore_1.onDocumentUpdated)("topUpRequests
         logger.info("No data change detected in onTopUpRequestUpdate, exiting.");
         return;
     }
-    // Proceed only if the status has changed from pending to something else.
     if (before.status !== 'pending' || before.status === after.status) {
         return;
     }
@@ -236,9 +411,8 @@ exports.onTopUpRequestUpdate = (0, firestore_1.onDocumentUpdated)("topUpRequests
         logger.error(`Request ${requestId} is missing 'storeId' or 'storeName'. Cannot process update.`);
         return;
     }
-    const whatsappQueueRef = db.collection('whatsappQueue');
+    const whatsappQueueRef = db.collection('Pujaseraqueue');
     const formattedAmount = (tokensToAdd || 0).toLocaleString('id-ID');
-    // Get customer's WhatsApp number and name from their user profile
     let customerWhatsapp = '';
     let customerName = after.userName || 'Pelanggan';
     if (userId) {
@@ -264,16 +438,18 @@ exports.onTopUpRequestUpdate = (0, firestore_1.onDocumentUpdated)("topUpRequests
         adminMessage = `❌ *Top-up Ditolak*\n\nPermintaan dari: *${storeName}*\nJumlah: *${formattedAmount} token*\n\nStatus berhasil diperbarui. Tidak ada perubahan pada saldo toko.`;
     }
     else {
-        // Do nothing for other status changes
         return;
     }
     try {
-        // Queue notification for customer
         if (customerWhatsapp) {
             const formattedPhone = customerWhatsapp.startsWith('0') ? `62${customerWhatsapp.substring(1)}` : customerWhatsapp;
             await whatsappQueueRef.add({
-                to: formattedPhone,
-                message: customerMessage,
+                type: 'whatsapp-notification',
+                payload: {
+                    to: formattedPhone,
+                    message: customerMessage,
+                    isGroup: false,
+                },
                 createdAt: firestore_2.FieldValue.serverTimestamp(),
             });
             logger.info(`Queued '${status}' notification for customer ${customerName} of store ${storeId}`);
@@ -281,11 +457,13 @@ exports.onTopUpRequestUpdate = (0, firestore_1.onDocumentUpdated)("topUpRequests
         else {
             logger.warn(`User ${userId} for store ${storeId} does not have a WhatsApp number. Cannot send notification.`);
         }
-        // Queue notification for admin group
         await whatsappQueueRef.add({
-            to: 'admin_group',
-            message: adminMessage,
-            isGroup: true,
+            type: 'whatsapp-notification',
+            payload: {
+                to: 'admin_group',
+                message: adminMessage,
+                isGroup: true,
+            },
             createdAt: firestore_2.FieldValue.serverTimestamp(),
         });
         logger.info(`Queued '${status}' notification for admin group for request from ${storeName}.`);
@@ -317,7 +495,6 @@ exports.sendDailySalesSummary = (0, scheduler_1.onSchedule)({
                 logger.warn(`Toko ${store.name} tidak memiliki admin.`);
                 return;
             }
-            // Calculate date range for yesterday
             const today = new Date();
             const yesterday = (0, date_fns_1.subDays)(today, 1);
             const startOfDayTs = firestore_2.Timestamp.fromDate(new Date(yesterday.setHours(0, 0, 0, 0)));
@@ -333,7 +510,6 @@ exports.sendDailySalesSummary = (0, scheduler_1.onSchedule)({
                 totalRevenue += txDoc.data().totalAmount || 0;
             });
             logger.info(`Toko: ${store.name}, Omset Kemarin: Rp ${totalRevenue}, Transaksi: ${totalTransactions}`);
-            // Fetch admin details
             const adminDocs = await Promise.all(store.adminUids.map((uid) => db.collection('users').doc(uid).get()));
             const formattedDate = (0, format_1.format)(yesterday, "EEEE, d MMMM yyyy", { locale: locale_1.id });
             for (const adminDoc of adminDocs) {
@@ -341,11 +517,14 @@ exports.sendDailySalesSummary = (0, scheduler_1.onSchedule)({
                     const adminData = adminDoc.data();
                     if (adminData && adminData.whatsapp) {
                         const message = `*Ringkasan Harian Chika POS*\n*${store.name}* - ${formattedDate}\n\nHalo *${adminData.name}*, berikut adalah ringkasan penjualan Anda kemarin:\n- *Total Omset*: Rp ${totalRevenue.toLocaleString('id-ID')}\n- *Jumlah Transaksi*: ${totalTransactions}\n\nTerus pantau dan optimalkan performa penjualan Anda melalui dasbor Chika. Semangat selalu! 💪\n\n_Apabila tidak berkenan, fitur ini dapat dinonaktifkan di menu Pengaturan._`;
-                        await db.collection('whatsappQueue').add({
-                            to: adminData.whatsapp,
-                            message: message,
-                            isGroup: false,
-                            storeId: storeId,
+                        await db.collection('Pujaseraqueue').add({
+                            type: 'whatsapp-notification',
+                            payload: {
+                                to: adminData.whatsapp,
+                                message: message,
+                                isGroup: false,
+                                storeId: storeId,
+                            },
                             createdAt: firestore_2.FieldValue.serverTimestamp(),
                         });
                         logger.info(`Laporan harian berhasil diantrikan untuk ${adminData.name} (${store.name})`);
