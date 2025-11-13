@@ -1,3 +1,4 @@
+
 'use client';
 
 import * as React from 'react';
@@ -88,7 +89,8 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
 
     const handleAction = async (slice: TenantOrderSlice, action: 'complete' | 'ready') => {
         if (!activeStore) return;
-        setProcessingId(slice.parentTransaction.id + slice.tenantStoreId);
+        const processingKey = slice.parentTransaction.id + slice.tenantStoreId;
+        setProcessingId(processingKey);
 
         try {
             if (action === 'complete') { // Action for Pujasera Admin/Cashier
@@ -122,7 +124,7 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                     body: JSON.stringify({
                         tenantId: slice.tenantStoreId,
                         pujaseraId: slice.parentTransaction.pujaseraId,
-                        parentTransactionId: slice.parentTransaction.id,
+                        parentTransactionId: slice.parentTransaction.parentTransactionId,
                     }),
                 });
 
@@ -169,6 +171,7 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                             const { parentTransaction, tenantStoreName, items, status } = slice;
                             const tableName = tables.find(t => t.id === parentTransaction.tableId)?.name;
                             const uniqueKey = `${parentTransaction.id}-${slice.tenantStoreId}-${idx}`;
+                            const isProcessing = processingId === parentTransaction.id + slice.tenantStoreId;
 
                             return (
                             <Card key={uniqueKey} className="flex flex-col">
@@ -221,9 +224,9 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                                             <Button 
                                                 className="w-full" 
                                                 onClick={() => handleAction(slice, 'complete')}
-                                                disabled={processingId === (parentTransaction.id + slice.tenantStoreId)}
+                                                disabled={isProcessing}
                                             >
-                                                {processingId === (parentTransaction.id + slice.tenantStoreId) ? <Loader className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
+                                                {isProcessing ? <Loader className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
                                                 Selesaikan Pesanan
                                             </Button>
                                         </>
@@ -231,9 +234,9 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                                         <Button 
                                             className="w-full" 
                                             onClick={() => handleAction(slice, 'ready')}
-                                            disabled={processingId === (parentTransaction.id + slice.tenantStoreId) || status === 'Siap Diambil'}
+                                            disabled={isProcessing || status === 'Siap Diambil'}
                                         >
-                                            {processingId === (parentTransaction.id + slice.tenantStoreId) ? <Loader className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+                                            {isProcessing ? <Loader className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
                                             Pesanan Siap
                                         </Button>
                                     )}
