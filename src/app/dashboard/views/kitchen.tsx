@@ -95,19 +95,18 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
         try {
             if (action === 'complete') { // Action for Pujasera Admin/Cashier
                 await runTransaction(db, async (transaction) => {
-                    const transactionRef = doc(db, 'stores', activeStore.id, 'transactions', slice.parentTransaction.id);
+                    const parentTransactionId = slice.parentTransaction.id;
+                    const transactionRef = doc(db, 'stores', activeStore.id, 'transactions', parentTransactionId);
                     
-                    // --- READS FIRST ---
                     let tableDoc = null;
                     let tableRef = null;
                     if (slice.parentTransaction.tableId) {
                         tableRef = doc(db, 'stores', activeStore.id, 'tables', slice.parentTransaction.tableId);
                         tableDoc = await transaction.get(tableRef);
                     }
-
-                    // --- WRITES SECOND ---
+    
                     transaction.update(transactionRef, { status: 'Selesai' });
-
+    
                     if (tableRef && tableDoc && tableDoc.exists()) {
                         if (tableDoc.data()?.isVirtual) {
                             transaction.delete(tableRef);
@@ -115,8 +114,16 @@ export default function Kitchen({ onFollowUpRequest, onPrintStickerRequest }: Ki
                             transaction.update(tableRef, { status: 'Menunggu Dibersihkan', currentOrder: null });
                         }
                     }
+                    
+                    // NEW: Also update all related sub-transactions
+                    const involvedTenantIds = Object.keys(slice.parentTransaction.itemsStatus || {});
+                    for (const tenantId of involvedTenantIds) {
+                        const subTransactionId = `${parentTransactionId}_${tenantId}`;
+                        const subTransactionRef = doc(db, 'stores', tenantId, 'transactions', subTransactionId);
+                        transaction.update(subTransactionRef, { status: 'Selesai' });
+                    }
                 });
-
+    
                 toast({ title: 'Status Diperbarui!', description: `Pesanan untuk ${slice.parentTransaction.customerName} telah ditandai selesai.` });
 
             } else if (action === 'ready') { // Action for Tenant Kitchen
