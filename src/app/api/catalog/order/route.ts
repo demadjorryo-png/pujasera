@@ -1,3 +1,4 @@
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getFirebaseAdmin } from '@/lib/server/firebase-admin';
 import type { OrderPayload, Table, TableOrder, Transaction } from '@/lib/types';
@@ -39,7 +40,7 @@ export async function POST(req: NextRequest) {
                 items: cart,
                 totalAmount: totalAmount,
                 orderTime: new Date().toISOString(),
-                customer: { id: customer.id, name: customer.name, phone: customer.phone, avatarUrl: customer.avatarUrl },
+                customer: { id: customer.id, name: customer.name, phone: customer.phone },
                 paymentMethod: 'kasir',
             };
             

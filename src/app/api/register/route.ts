@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
         password,
         referralCode,
       },
-      createdAt: FieldValue.serverTimestamp(),
+      // The createdAt timestamp will be added by the Cloud Function
     });
 
     console.info(`Queued new pujasera registration for ${email}`);

@@ -1,3 +1,4 @@
+
 'use server';
 import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { onSchedule } from "firebase-functions/v2/scheduler";
@@ -55,6 +56,7 @@ export const processPujaseraQueue = onDocumentCreated("Pujaseraqueue/{jobId}", a
     const { type, payload } = jobData;
 
     try {
+        await snapshot.ref.update({ status: 'processing', startedAt: FieldValue.serverTimestamp() });
         switch (type) {
             case 'pujasera-order':
                 await handlePujaseraOrder(payload);
@@ -74,7 +76,7 @@ export const processPujaseraQueue = onDocumentCreated("Pujaseraqueue/{jobId}", a
                 break;
             default:
                 logger.warn(`Unknown job type: ${type}`);
-                await snapshot.ref.update({ status: 'unknown_type', error: `Unknown job type: ${type}` });
+                await snapshot.ref.update({ status: 'unknown_type', error: `Unknown job type: ${type}`, processedAt: FieldValue.serverTimestamp() });
         }
     } catch (error: any) {
         logger.error(`Failed to process job ${snapshot.id} of type ${type}:`, error);

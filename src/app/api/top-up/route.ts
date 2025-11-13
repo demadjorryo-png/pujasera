@@ -76,50 +76,13 @@ export async function POST(req: NextRequest) {
             requestedAt: new Date().toISOString(),
         };
 
-        const batch = db.batch();
+        // Directly write to the root collection 'topUpRequests' which triggers the Cloud Function
+        await db.collection('topUpRequests').add(newRequestData);
 
-        // 1. Write to the root collection 'topUpRequests'
-        const newRequestRef = db.collection('topUpRequests').doc();
-        batch.set(newRequestRef, newRequestData);
-        
-        // 2. Sync to the store's subcollection immediately
-        const historyRef = db.collection('stores').doc(storeId).collection('topUpRequests').doc(newRequestRef.id);
-        batch.set(historyRef, newRequestData);
+        console.info(`Top-up request submitted for store ${storeId}`);
 
-        await batch.commit();
-        console.info(`Top-up request ${newRequestRef.id} submitted and synced for store ${storeId}`);
-
-        const successResponse = NextResponse.json({ success: true });
-
-        // --- Handle WhatsApp notifications in the background (fire-and-forget) ---
-        (async () => {
-            try {
-                const { deviceId, adminGroup } = getWhatsappSettings();
-                if (!deviceId) {
-                    console.warn("WhatsApp deviceId not configured. Skipping notifications.");
-                    return;
-                }
-                
-                // Notify platform admin
-                if (adminGroup) {
-                    const adminMessage = `*PENGAJUAN TOP UP BARU*\nToko: *${storeName}*\nAdmin: *${name}*\nJumlah: *Rp ${totalAmount.toLocaleString('id-ID')}* (+${tokensToAdd.toLocaleString('id-ID')} Token)\nStatus: *Pending*\n\nMohon untuk segera diverifikasi melalui panel Superadmin.\nLihat bukti: ${proofUrl}`;
-                    internalSendWhatsapp(deviceId, adminGroup, adminMessage, true);
-                }
-                
-                // Notify user
-                const userDoc = await db.collection('users').doc(uid).get();
-                const userWhatsapp = userDoc.data()?.whatsapp;
-                if (userWhatsapp) {
-                    const userMessage = `Halo *${name}*, pengajuan top up Pradana Token Anda untuk toko *${storeName}* sebesar *Rp ${totalAmount.toLocaleString('id-ID')}* telah berhasil kami terima dan sedang dalam proses verifikasi.`;
-                    const formattedPhone = formatWhatsappNumber(userWhatsapp);
-                    internalSendWhatsapp(deviceId, formattedPhone, userMessage);
-                }
-            } catch (whatsappError) {
-                console.error("Error sending top-up notifications:", whatsappError);
-            }
-        })();
-
-        return successResponse;
+        // The onTopUpRequestCreate function will handle syncing and notifications
+        return NextResponse.json({ success: true, message: 'Top-up request submitted successfully.' });
 
     } catch (error) {
         console.error('Error in submitTopUpRequest:', error);
