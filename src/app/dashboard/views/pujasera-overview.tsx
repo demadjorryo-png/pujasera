@@ -58,7 +58,10 @@ export default function PujaseraOverview() {
         const { getDocs, collection, query } = await import('firebase/firestore');
         
         const allTransactions: Transaction[] = [];
-        for (const tenant of pujaseraTenants) {
+        // Filter out the main pujasera store itself from transaction fetching
+        const actualTenants = pujaseraTenants.filter(tenant => tenant.id !== activeStore?.id);
+
+        for (const tenant of actualTenants) {
           const q = query(collection(db, 'stores', tenant.id, 'transactions'));
           const querySnapshot = await getDocs(q);
           querySnapshot.forEach((doc) => {
@@ -79,7 +82,7 @@ export default function PujaseraOverview() {
     }
 
     fetchAllTenantTransactions();
-  }, [isLoading, pujaseraTenants, toast]);
+  }, [isLoading, pujaseraTenants, toast, activeStore?.id]);
 
 
   const {
@@ -127,19 +130,22 @@ export default function PujaseraOverview() {
     const leaderboard = Object.entries(salesByTenant)
         .map(([storeId, revenue]) => {
             const tenant = pujaseraTenants.find(t => t.id === storeId);
+            // Exclude the main pujasera entity itself
+            if (tenant?.id === activeStore?.id) return null;
             return {
                 storeId,
                 storeName: tenant?.name || 'Tenant Tidak Dikenal',
                 totalRevenue: revenue,
             };
         })
-        .sort((a, b) => b.totalRevenue - a.totalRevenue)
-        .slice(0, 5);
+        .filter(Boolean) // Remove null entries
+        .sort((a, b) => b!.totalRevenue - a!.totalRevenue)
+        .slice(0, 5) as { storeId: string; storeName: string; totalRevenue: number }[];
 
 
     return { totalRevenue, totalTransactions, monthlyGrowthData: monthlyData, tenantLeaderboard: leaderboard };
 
-  }, [isDataLoading, allTenantTransactions, pujaseraTenants]);
+  }, [isDataLoading, allTenantTransactions, pujaseraTenants, activeStore?.id]);
   
   const handleClaimTrial = async () => {
     try {
@@ -190,6 +196,7 @@ export default function PujaseraOverview() {
   }
   
   const isTrialAvailable = !activeStore?.hasUsedCatalogTrial && feeSettings && feeSettings.catalogTrialFee >= 0;
+  const actualTenantsCount = pujaseraTenants.filter(t => t.id !== activeStore?.id).length;
 
   return (
     <div className="grid gap-6">
@@ -246,7 +253,7 @@ export default function PujaseraOverview() {
             <Store className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{pujaseraTenants.length}</div>
+            <div className="text-2xl font-bold">{actualTenantsCount}</div>
             <p className="text-xs text-muted-foreground">Jumlah tenant yang terdaftar di grup ini</p>
           </CardContent>
         </Card>
