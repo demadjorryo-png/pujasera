@@ -16,7 +16,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
-import { DollarSign, Store, TrendingUp, Trophy, Newspaper } from 'lucide-react';
+import { DollarSign, Store, TrendingUp, Trophy, Newspaper, TrendingDown, PackageX } from 'lucide-react';
 import { useAuth } from '@/contexts/auth-context';
 import { useDashboard } from '@/contexts/dashboard-context';
 import { subMonths, format, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns';
@@ -27,7 +27,8 @@ import { Button } from '@/components/ui/button';
 import { AIConfirmationDialog } from '@/components/dashboard/ai-confirmation-dialog';
 import { useToast } from '@/hooks/use-toast';
 import { auth, db } from '@/lib/firebase';
-import { Transaction } from '@/lib/types';
+import { Transaction, Product } from '@/lib/types';
+import { collectionGroup, getDocs, query } from 'firebase/firestore';
 
 const chartConfig = {
   revenue: {
@@ -44,45 +45,56 @@ export default function PujaseraOverview() {
 
   // New state to hold transactions from all tenants
   const [allTenantTransactions, setAllTenantTransactions] = React.useState<Transaction[]>([]);
+  const [allTenantProducts, setAllTenantProducts] = React.useState<Product[]>([]);
   const [isDataLoading, setIsDataLoading] = React.useState(true);
 
   React.useEffect(() => {
-    async function fetchAllTenantTransactions() {
-      if (isLoading || pujaseraTenants.length === 0) {
+    async function fetchAllTenantData() {
+      if (isLoading || pujaseraTenants.length === 0 || !activeStore?.pujaseraGroupSlug) {
         setIsDataLoading(false);
         return;
       }
       
       setIsDataLoading(true);
       try {
-        const { getDocs, collection, query } = await import('firebase/firestore');
+        const { getDocs, collection, query, where } = await import('firebase/firestore');
         
-        const allTransactions: Transaction[] = [];
-        // Filter out the main pujasera store itself from transaction fetching
+        // 1. Fetch all transactions from all tenants in the group
+        const transactionsQuery = query(
+          collectionGroup(db, 'transactions'),
+          where('pujaseraGroupSlug', '==', activeStore.pujaseraGroupSlug)
+        );
+        const transactionsSnapshot = await getDocs(transactionsQuery);
+        const allTransactions = transactionsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
+        setAllTenantTransactions(allTransactions);
+
+        // 2. Fetch all products from all tenants
+        const allProducts: Product[] = [];
         const actualTenants = pujaseraTenants.filter(tenant => tenant.id !== activeStore?.id);
 
         for (const tenant of actualTenants) {
-          const q = query(collection(db, 'stores', tenant.id, 'transactions'));
-          const querySnapshot = await getDocs(q);
-          querySnapshot.forEach((doc) => {
-            allTransactions.push({ id: doc.id, ...doc.data() } as Transaction);
+          const productsQuery = query(collection(db, 'stores', tenant.id, 'products'));
+          const productsSnapshot = await getDocs(productsQuery);
+          productsSnapshot.forEach((doc) => {
+            allProducts.push({ id: doc.id, ...doc.data() } as Product);
           });
         }
-        setAllTenantTransactions(allTransactions);
+        setAllTenantProducts(allProducts);
+
       } catch (error) {
-        console.error("Error fetching all tenant transactions:", error);
+        console.error("Error fetching all tenant data:", error);
         toast({
           variant: 'destructive',
           title: 'Gagal Memuat Data Tenant',
-          description: 'Tidak dapat mengambil data transaksi dari semua tenant.'
+          description: 'Tidak dapat mengambil data transaksi dan produk dari semua tenant.'
         });
       } finally {
         setIsDataLoading(false);
       }
     }
 
-    fetchAllTenantTransactions();
-  }, [isLoading, pujaseraTenants, toast, activeStore?.id]);
+    fetchAllTenantData();
+  }, [isLoading, pujaseraTenants, toast, activeStore?.id, activeStore?.pujaseraGroupSlug]);
 
 
   const {
@@ -90,15 +102,17 @@ export default function PujaseraOverview() {
     totalTransactions,
     monthlyGrowthData,
     tenantLeaderboard,
+    topProductsThisMonth,
+    worstProductsThisMonth,
+    unsoldProductsThisMonth
   } = React.useMemo(() => {
     if (isDataLoading) {
-      return { totalRevenue: 0, totalTransactions: 0, monthlyGrowthData: [], tenantLeaderboard: [] };
+      return { totalRevenue: 0, totalTransactions: 0, monthlyGrowthData: [], tenantLeaderboard: [], topProductsThisMonth: [], worstProductsThisMonth: [], unsoldProductsThisMonth: [] };
     }
 
     const totalRevenue = allTenantTransactions.reduce((sum, tx) => sum + tx.totalAmount, 0);
     const totalTransactions = allTenantTransactions.length;
 
-    // Monthly Growth Data
     const now = new Date();
     const monthlyData: { month: string; revenue: number }[] = [];
     for (let i = 5; i >= 0; i--) {
@@ -114,7 +128,6 @@ export default function PujaseraOverview() {
       monthlyData.push({ month: monthName, revenue: monthlyRevenue });
     }
 
-    // Tenant Leaderboard for this month
     const startOfCurrentMonth = startOfMonth(now);
     const endOfCurrentMonth = endOfMonth(now);
     const thisMonthTransactions = allTenantTransactions.filter(t => isWithinInterval(new Date(t.createdAt), { start: startOfCurrentMonth, end: endOfCurrentMonth }));
@@ -130,22 +143,45 @@ export default function PujaseraOverview() {
     const leaderboard = Object.entries(salesByTenant)
         .map(([storeId, revenue]) => {
             const tenant = pujaseraTenants.find(t => t.id === storeId);
-            // Exclude the main pujasera entity itself
-            if (tenant?.id === activeStore?.id) return null;
+            if (!tenant || tenant.id === activeStore?.id) return null;
             return {
                 storeId,
-                storeName: tenant?.name || 'Tenant Tidak Dikenal',
+                storeName: tenant.name,
                 totalRevenue: revenue,
             };
         })
-        .filter(Boolean) // Remove null entries
+        .filter(Boolean)
         .sort((a, b) => b!.totalRevenue - a!.totalRevenue)
         .slice(0, 5) as { storeId: string; storeName: string; totalRevenue: number }[];
 
+    // Product Performance Calculation
+    const productSales: Record<string, number> = {};
+    thisMonthTransactions.forEach(tx => {
+      tx.items.forEach(item => {
+        productSales[item.productName] = (productSales[item.productName] || 0) + item.quantity;
+      });
+    });
 
-    return { totalRevenue, totalTransactions, monthlyGrowthData: monthlyData, tenantLeaderboard: leaderboard };
+    const sortedProducts = Object.entries(productSales).sort(([, a], [, b]) => b - a);
+    const topProducts = sortedProducts.slice(0, 5);
+    const worstProducts = sortedProducts.filter(([, qty]) => qty > 0).slice(-5).reverse();
+    
+    const soldProductNames = new Set(Object.keys(productSales));
+    const allProductNames = new Set(allTenantProducts.map(p => p.name));
+    const unsold = Array.from(allProductNames).filter(name => !soldProductNames.has(name)).slice(0, 5);
 
-  }, [isDataLoading, allTenantTransactions, pujaseraTenants, activeStore?.id]);
+
+    return { 
+        totalRevenue, 
+        totalTransactions, 
+        monthlyGrowthData: monthlyData, 
+        tenantLeaderboard: leaderboard,
+        topProductsThisMonth: topProducts,
+        worstProductsThisMonth: worstProducts,
+        unsoldProductsThisMonth: unsold,
+    };
+
+  }, [isDataLoading, allTenantTransactions, allTenantProducts, pujaseraTenants, activeStore?.id]);
   
   const handleClaimTrial = async () => {
     try {
@@ -313,6 +349,61 @@ export default function PujaseraOverview() {
             </CardContent>
         </Card>
       </div>
+
+       <div className="grid gap-6 md:grid-cols-3">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 font-headline tracking-wider"><TrendingUp className="text-primary" />Produk Terlaris</CardTitle>
+            <CardDescription>Bulan ini, berdasarkan unit terjual di semua tenant.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-2">
+              {topProductsThisMonth.map(([name, quantity], index) => (
+                <li key={name} className="flex justify-between text-sm font-medium">
+                  <span>{index + 1}. {name}</span>
+                  <span className="font-mono">{quantity}x</span>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 font-headline tracking-wider"><TrendingDown className="text-destructive" />Produk Kurang Laris</CardTitle>
+            <CardDescription>Bulan ini, berdasarkan unit terjual di semua tenant.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-2">
+              {worstProductsThisMonth.map(([name, quantity], index) => (
+                <li key={name} className="flex justify-between text-sm font-medium">
+                  <span>{index + 1}. {name}</span>
+                  <span className="font-mono">{quantity}x</span>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 font-headline tracking-wider"><PackageX className="text-muted-foreground" />Produk Belum Laku</CardTitle>
+            <CardDescription>Bulan ini, belum ada penjualan di semua tenant.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-2">
+              {unsoldProductsThisMonth.length > 0 ? (
+                unsoldProductsThisMonth.map((name, index) => (
+                  <li key={name} className="flex justify-between text-sm font-medium">
+                    <span>{index + 1}. {name}</span>
+                  </li>
+                ))
+              ) : (
+                <p className="text-sm text-muted-foreground text-center">Semua produk terjual bulan ini!</p>
+              )}
+            </ul>
+          </CardContent>
+        </Card>
+      </div>
+
     </div>
   );
 }
@@ -329,6 +420,11 @@ function PujaseraOverviewSkeleton() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <Card><CardHeader><Skeleton className="h-6 w-3/4" /><Skeleton className="h-4 w-1/2 mt-2" /></CardHeader><CardContent><Skeleton className="w-full h-[300px]" /></CardContent></Card>
                 <Card><CardHeader><Skeleton className="h-6 w-3/4" /><Skeleton className="h-4 w-1/2 mt-2" /></CardHeader><CardContent className="space-y-4">{Array.from({length: 5}).map((_, i) => <div key={i} className="flex justify-between"><Skeleton className="h-5 w-1/2" /><Skeleton className="h-5 w-1/4" /></div>)}</CardContent></Card>
+            </div>
+            <div className="grid gap-6 md:grid-cols-3">
+              <Card><CardHeader><Skeleton className="h-6 w-3/4"/><Skeleton className="h-4 w-1/2 mt-2"/></CardHeader><CardContent className="space-y-2">{Array.from({length:5}).map((_,i)=><Skeleton key={i} className="h-5 w-full"/>)}</CardContent></Card>
+              <Card><CardHeader><Skeleton className="h-6 w-3/4"/><Skeleton className="h-4 w-1/2 mt-2"/></CardHeader><CardContent className="space-y-2">{Array.from({length:5}).map((_,i)=><Skeleton key={i} className="h-5 w-full"/>)}</CardContent></Card>
+              <Card><CardHeader><Skeleton className="h-6 w-3/4"/><Skeleton className="h-4 w-1/2 mt-2"/></CardHeader><CardContent className="space-y-2">{Array.from({length:5}).map((_,i)=><Skeleton key={i} className="h-5 w-full"/>)}</CardContent></Card>
             </div>
         </div>
     )
