@@ -287,7 +287,7 @@ export default function Promotions() {
                   {recommendations.recommendations.map((rec, index) => (
                     <Card key={index}>
                       <CardHeader>
-                        <CardTitle className="text-base flex items-center gap-2 text-accent"><Sparkles className="h-4 w-4" />{rec.title}</CardTitle>
+                        <CardTitle className="text-base flex items-center gap-2 text-primary"><Sparkles className="h-4 w-4" />{rec.title}</CardTitle>
                       </CardHeader>
                       <CardContent className="space-y-2">
                         <p className="text-sm">{rec.description}</p>
