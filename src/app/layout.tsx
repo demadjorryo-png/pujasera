@@ -10,6 +10,7 @@ import PwaInstaller from '@/components/Pwa-installer';
 export const metadata: Metadata = {
   title: 'Pujasera Chika AI',
   description: 'Aplikasi Kasir untuk Pujasera & Grup UMKM F&B',
+  manifest: '/manifest.json',
 };
 
 export default function RootLayout({
@@ -25,8 +26,7 @@ export default function RootLayout({
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=PT+Sans:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet" />
         <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-        <link rel="manifest" href="/manifest.json" />
-        <meta name="theme-color" content="#000000" />
+        <meta name="theme-color" content="#FBBF24" />
       </head>
       <body className="font-body antialiased">
         <ThemeProvider
