@@ -46,6 +46,7 @@ import { Dialog, DialogTrigger } from '@/components/ui/dialog';
 import { useAuth } from '@/contexts/auth-context';
 import { ThemeSwitcher } from '@/components/dashboard/theme-switcher';
 import { FoodCourtIcon } from '@/components/icons/food-court-icon';
+import { ChikaIcon } from '@/components/icons/chika-icon';
 
 type MainSidebarProps = {
   pradanaTokenBalance: number;
@@ -104,7 +105,7 @@ export function MainSidebar({ pradanaTokenBalance }: MainSidebarProps) {
             { view: 'pujasera-overview', label: 'Overview Pujasera', icon: <LayoutGrid />, roles: ['pujasera_admin'], tourId: 'sidebar-overview' },
             { view: 'pujasera-pos', label: 'Kasir Pujasera', icon: <Armchair />, roles: ['pujasera_cashier', 'pujasera_admin'], tourId: 'sidebar-pos' },
             { view: 'transactions', label: 'Transaksi', icon: <History />, roles: ['pujasera_admin', 'pujasera_cashier'], tourId: 'sidebar-transactions' },
-            { view: 'kitchen', label: 'Dapur Terpusat', icon: <Briefcase />, roles: ['pujasera_admin', 'pujasera_cashier'], tourId: 'sidebar-kitchen' },
+            { view: 'kitchen', label: 'Dapur Terpusat', icon: <ChefHat />, roles: ['pujasera_admin', 'pujasera_cashier'], tourId: 'sidebar-kitchen' },
         ]
     },
     {
@@ -112,7 +113,7 @@ export function MainSidebar({ pradanaTokenBalance }: MainSidebarProps) {
         icon: <Building />,
         roles: ['pujasera_admin', 'pujasera_cashier'],
         items: [
-            { view: 'tenants', label: 'Manajemen Tenant', icon: <Store />, roles: ['pujasera_admin'], tourId: 'sidebar-tenants' },
+            { view: 'tenants', label: 'Manajemen Tenant', icon: <Briefcase />, roles: ['pujasera_admin'], tourId: 'sidebar-tenants' },
             { view: 'employees', label: 'Manajemen Karyawan', icon: <Users />, roles: ['pujasera_admin'], tourId: 'sidebar-employees' },
             { view: 'customers', label: 'Pelanggan', icon: <Contact2 />, roles: ['pujasera_admin', 'pujasera_cashier'], tourId: 'sidebar-customers' },
         ]
