@@ -231,7 +231,7 @@ export default function LoginPage() {
         </Card>
         
         <div className="space-y-4">
-            <Link href="/register" className="block">
+            <Link href="https://tenant.era5758.co.id" target="_blank" className="block">
                 <Card className="text-center hover:bg-muted">
                     <CardHeader>
                         <CardTitle className="text-lg font-headline tracking-wider">Aplikasi Pujasera Terpisah</CardTitle>
