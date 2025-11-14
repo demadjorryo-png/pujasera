@@ -22,9 +22,6 @@ import { useRouter } from 'next/navigation';
 import { Logo } from '@/components/dashboard/logo';
 import { Loader, Eye, EyeOff } from 'lucide-react';
 import Link from 'next/link';
-import { auth, db } from '@/lib/firebase';
-import { createUserWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc, serverTimestamp, writeBatch } from 'firebase/firestore';
 
 const registerSchema = z.object({
   pujaseraName: z.string().min(3, { message: 'Nama pujasera minimal 3 karakter.' }),
@@ -33,6 +30,7 @@ const registerSchema = z.object({
   email: z.string().email({ message: 'Format email tidak valid.' }),
   whatsapp: z.string().min(10, { message: 'Nomor WhatsApp minimal 10 digit.' }),
   password: z.string().min(6, { message: 'Password minimal 6 karakter.' }),
+  referralCode: z.string().optional(),
 });
 
 type RegisterFormValues = z.infer<typeof registerSchema>;
@@ -52,6 +50,7 @@ export default function RegisterPujaseraPage() {
       email: '',
       whatsapp: '',
       password: '',
+      referralCode: '',
     },
   });
 
@@ -191,6 +190,19 @@ export default function RegisterPujaseraPage() {
                           {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                         </Button>
                       </div>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                 <FormField
+                  control={form.control}
+                  name="referralCode"
+                  render={({ field }) => (
+                    <FormItem>
+                      <Label>Kode Referral (Opsional)</Label>
+                      <FormControl>
+                        <Input placeholder="Contoh: CHIKA-PROMO" {...field} />
+                      </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
