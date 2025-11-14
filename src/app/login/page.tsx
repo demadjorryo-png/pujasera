@@ -249,7 +249,7 @@ export default function LoginPage() {
                         <CardDescription>Untuk kafe, resto, atau cloud kitchen.</CardDescription>
                     </CardHeader>
                     <CardContent className="flex justify-center items-center p-4">
-                        <ChikaIcon className="h-12 w-12 text-primary" />
+                        <ChefHat className="h-12 w-12 text-primary" />
                     </CardContent>
                 </Card>
             </Link>
