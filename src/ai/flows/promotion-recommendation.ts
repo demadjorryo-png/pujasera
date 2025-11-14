@@ -55,6 +55,23 @@ export async function getPromotionRecommendations(
 }
 
 
+/**
+ * @fileoverview This AI flow analyzes various data points to generate strategic promotion recommendations.
+ *
+ * The AI considers the following data:
+ * 1.  **Product Performance**:
+ *     - Top Selling Products: To identify core items that can be leveraged.
+ *     - Worst Selling Products: To suggest ways to boost their sales (e.g., through bundling).
+ *     - Unsold Products: To create "introductory" or "clearance" promos.
+ * 2.  **Business Context**:
+ *     - Business Description: To ensure recommendations are relevant to the business type (e.g., cafe vs. restaurant).
+ *     - Store Name: For personalization.
+ * 3.  **Existing Promotions**:
+ *     - Current Redemption Options: To avoid suggesting duplicate promos and to inspire new, complementary ideas.
+ *
+ * By combining these data points, the AI aims to provide recommendations that are not just creative
+ * but also strategically sound for business growth.
+ */
 export const promotionRecommendationFlow = ai.defineFlow(
   {
     name: 'promotionRecommendationFlow',
