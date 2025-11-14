@@ -1,3 +1,4 @@
+
 'use client';
 
 import * as React from 'react';
@@ -28,7 +29,7 @@ import { AIConfirmationDialog } from '@/components/dashboard/ai-confirmation-dia
 import { useToast } from '@/hooks/use-toast';
 import { auth, db } from '@/lib/firebase';
 import { Transaction, Product } from '@/lib/types';
-import { collectionGroup, getDocs, query } from 'firebase/firestore';
+import { collection, collectionGroup, getDocs, query, where } from 'firebase/firestore';
 
 const chartConfig = {
   revenue: {
@@ -43,42 +44,41 @@ export default function PujaseraOverview() {
   const { feeSettings } = dashboardData;
   const { toast } = useToast();
 
-  // New state to hold transactions from all tenants
   const [allTenantTransactions, setAllTenantTransactions] = React.useState<Transaction[]>([]);
   const [allTenantProducts, setAllTenantProducts] = React.useState<Product[]>([]);
   const [isDataLoading, setIsDataLoading] = React.useState(true);
 
   React.useEffect(() => {
     async function fetchAllTenantData() {
-      if (isLoading || pujaseraTenants.length === 0 || !activeStore?.pujaseraGroupSlug) {
+      if (isLoading || pujaseraTenants.length === 0) {
         setIsDataLoading(false);
         return;
       }
       
       setIsDataLoading(true);
       try {
-        const { getDocs, collection, query, where } = await import('firebase/firestore');
+        const { getDocs, collection, query } = await import('firebase/firestore');
         
-        // 1. Fetch all transactions from all tenants in the group
-        const transactionsQuery = query(
-          collectionGroup(db, 'transactions'),
-          where('pujaseraGroupSlug', '==', activeStore.pujaseraGroupSlug)
+        const actualTenants = pujaseraTenants.filter(tenant => tenant.id !== activeStore?.id);
+
+        // 1. Fetch all transactions for each tenant
+        const transactionPromises = actualTenants.map(tenant => 
+            getDocs(collection(db, 'stores', tenant.id, 'transactions'))
         );
-        const transactionsSnapshot = await getDocs(transactionsQuery);
-        const allTransactions = transactionsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
+        const transactionSnapshots = await Promise.all(transactionPromises);
+        const allTransactions = transactionSnapshots.flatMap(snapshot => 
+            snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction))
+        );
         setAllTenantTransactions(allTransactions);
 
         // 2. Fetch all products from all tenants
-        const allProducts: Product[] = [];
-        const actualTenants = pujaseraTenants.filter(tenant => tenant.id !== activeStore?.id);
-
-        for (const tenant of actualTenants) {
-          const productsQuery = query(collection(db, 'stores', tenant.id, 'products'));
-          const productsSnapshot = await getDocs(productsQuery);
-          productsSnapshot.forEach((doc) => {
-            allProducts.push({ id: doc.id, ...doc.data() } as Product);
-          });
-        }
+        const productPromises = actualTenants.map(tenant => 
+            getDocs(collection(db, 'stores', tenant.id, 'products'))
+        );
+        const productSnapshots = await Promise.all(productPromises);
+        const allProducts = productSnapshots.flatMap(snapshot => 
+            snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product))
+        );
         setAllTenantProducts(allProducts);
 
       } catch (error) {
@@ -94,7 +94,7 @@ export default function PujaseraOverview() {
     }
 
     fetchAllTenantData();
-  }, [isLoading, pujaseraTenants, toast, activeStore?.id, activeStore?.pujaseraGroupSlug]);
+  }, [isLoading, pujaseraTenants, toast, activeStore?.id]);
 
 
   const {
@@ -143,7 +143,7 @@ export default function PujaseraOverview() {
     const leaderboard = Object.entries(salesByTenant)
         .map(([storeId, revenue]) => {
             const tenant = pujaseraTenants.find(t => t.id === storeId);
-            if (!tenant || tenant.id === activeStore?.id) return null;
+            if (!tenant || tenant.id === activeStore?.id) return null; // Exclude the pujasera itself
             return {
                 storeId,
                 storeName: tenant.name,
