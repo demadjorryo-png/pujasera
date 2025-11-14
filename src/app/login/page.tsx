@@ -36,7 +36,6 @@ import { sendPasswordResetEmail } from 'firebase/auth';
 import { FirebaseError } from 'firebase/app';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
-import { ChikaIcon } from '@/components/icons/chika-icon';
 
 
 const loginSchema = z.object({
@@ -242,7 +241,7 @@ export default function LoginPage() {
                     </CardContent>
                 </Card>
             </Link>
-            <Link href="/register" className="block">
+            <Link href="https://fnb.era5758.co.id" target="_blank" className="block">
                 <Card className="text-center hover:bg-muted">
                     <CardHeader>
                         <CardTitle className="text-lg font-headline tracking-wider">APLIKASI POS F&amp;B</CardTitle>
@@ -291,7 +290,7 @@ export default function LoginPage() {
                         <div>
                             <RadioGroupItem value="F&B" id="type-fnb" className="peer sr-only" />
                             <Label htmlFor="type-fnb" className="flex items-center justify-center gap-2 rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary cursor-pointer">
-                                <ChikaIcon className="h-5 w-5"/> F&amp;B
+                                <ChefHat className="h-5 w-5"/> F&amp;B
                             </Label>
                         </div>
                         <div>
