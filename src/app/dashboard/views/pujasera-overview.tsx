@@ -27,6 +27,7 @@ import { Button } from '@/components/ui/button';
 import { AIConfirmationDialog } from '@/components/dashboard/ai-confirmation-dialog';
 import { useToast } from '@/hooks/use-toast';
 import { auth, db } from '@/lib/firebase';
+import { Transaction } from '@/lib/types';
 
 const chartConfig = {
   revenue: {
@@ -38,8 +39,48 @@ const chartConfig = {
 export default function PujaseraOverview() {
   const { pujaseraTenants, activeStore, updateActiveStore, refreshActiveStore } = useAuth();
   const { dashboardData, isLoading } = useDashboard();
-  const { transactions, feeSettings } = dashboardData;
+  const { feeSettings } = dashboardData;
   const { toast } = useToast();
+
+  // New state to hold transactions from all tenants
+  const [allTenantTransactions, setAllTenantTransactions] = React.useState<Transaction[]>([]);
+  const [isDataLoading, setIsDataLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    async function fetchAllTenantTransactions() {
+      if (isLoading || pujaseraTenants.length === 0) {
+        setIsDataLoading(false);
+        return;
+      }
+      
+      setIsDataLoading(true);
+      try {
+        const { getDocs, collection, query } = await import('firebase/firestore');
+        
+        const allTransactions: Transaction[] = [];
+        for (const tenant of pujaseraTenants) {
+          const q = query(collection(db, 'stores', tenant.id, 'transactions'));
+          const querySnapshot = await getDocs(q);
+          querySnapshot.forEach((doc) => {
+            allTransactions.push({ id: doc.id, ...doc.data() } as Transaction);
+          });
+        }
+        setAllTenantTransactions(allTransactions);
+      } catch (error) {
+        console.error("Error fetching all tenant transactions:", error);
+        toast({
+          variant: 'destructive',
+          title: 'Gagal Memuat Data Tenant',
+          description: 'Tidak dapat mengambil data transaksi dari semua tenant.'
+        });
+      } finally {
+        setIsDataLoading(false);
+      }
+    }
+
+    fetchAllTenantTransactions();
+  }, [isLoading, pujaseraTenants, toast]);
+
 
   const {
     totalRevenue,
@@ -47,15 +88,12 @@ export default function PujaseraOverview() {
     monthlyGrowthData,
     tenantLeaderboard,
   } = React.useMemo(() => {
-    if (isLoading || pujaseraTenants.length === 0 || !transactions) {
+    if (isDataLoading) {
       return { totalRevenue: 0, totalTransactions: 0, monthlyGrowthData: [], tenantLeaderboard: [] };
     }
 
-    const tenantIds = new Set(pujaseraTenants.map(t => t.id));
-    const pujaseraTransactions = transactions.filter(tx => tenantIds.has(tx.storeId));
-
-    const totalRevenue = pujaseraTransactions.reduce((sum, tx) => sum + tx.totalAmount, 0);
-    const totalTransactions = pujaseraTransactions.length;
+    const totalRevenue = allTenantTransactions.reduce((sum, tx) => sum + tx.totalAmount, 0);
+    const totalTransactions = allTenantTransactions.length;
 
     // Monthly Growth Data
     const now = new Date();
@@ -66,7 +104,7 @@ export default function PujaseraOverview() {
       const end = endOfMonth(targetMonth);
       const monthName = format(targetMonth, 'MMM', { locale: idLocale });
 
-      const monthlyRevenue = pujaseraTransactions
+      const monthlyRevenue = allTenantTransactions
         .filter(t => isWithinInterval(new Date(t.createdAt), { start, end }))
         .reduce((sum, t) => sum + t.totalAmount, 0);
 
@@ -76,7 +114,7 @@ export default function PujaseraOverview() {
     // Tenant Leaderboard for this month
     const startOfCurrentMonth = startOfMonth(now);
     const endOfCurrentMonth = endOfMonth(now);
-    const thisMonthTransactions = pujaseraTransactions.filter(t => isWithinInterval(new Date(t.createdAt), { start: startOfCurrentMonth, end: endOfCurrentMonth }));
+    const thisMonthTransactions = allTenantTransactions.filter(t => isWithinInterval(new Date(t.createdAt), { start: startOfCurrentMonth, end: endOfCurrentMonth }));
 
     const salesByTenant: Record<string, number> = {};
     thisMonthTransactions.forEach(tx => {
@@ -101,7 +139,7 @@ export default function PujaseraOverview() {
 
     return { totalRevenue, totalTransactions, monthlyGrowthData: monthlyData, tenantLeaderboard: leaderboard };
 
-  }, [isLoading, pujaseraTenants, transactions]);
+  }, [isDataLoading, allTenantTransactions, pujaseraTenants]);
   
   const handleClaimTrial = async () => {
     try {
@@ -147,7 +185,7 @@ export default function PujaseraOverview() {
     }
   };
 
-  if (isLoading || !feeSettings) {
+  if (isLoading || !feeSettings || isDataLoading) {
     return <PujaseraOverviewSkeleton />;
   }
   
