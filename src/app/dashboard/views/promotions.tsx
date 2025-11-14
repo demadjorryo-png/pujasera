@@ -20,7 +20,7 @@ import {
 import type { RedemptionOption, Transaction, Product } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { PlusCircle, CheckCircle, XCircle, Sparkles, Target, Trash2 } from 'lucide-react';
+import { PlusCircle, CheckCircle, XCircle, Sparkles, Target, Trash2, Edit } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { startOfMonth, endOfMonth, isWithinInterval } from 'date-fns';
 import {
@@ -45,6 +45,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { AddPromotionForm } from '@/components/dashboard/add-promotion-form';
+import { EditPromotionForm } from '@/components/dashboard/edit-promotion-form';
 import { useAuth } from '@/contexts/auth-context';
 import { useDashboard } from '@/contexts/dashboard-context';
 import { AIConfirmationDialog } from '@/components/dashboard/ai-confirmation-dialog';
@@ -87,6 +88,7 @@ export default function Promotions() {
   const { toast } = useToast();
 
   const [isAddDialogOpen, setIsAddDialogOpen] = React.useState(false);
+  const [isEditDialogOpen, setIsEditDialogOpen] = React.useState(false);
   const [selectedPromotion, setSelectedPromotion] = React.useState<RedemptionOption | null>(null);
   const [promotionToDelete, setPromotionToDelete] = React.useState<RedemptionOption | null>(null);
   const [isDetailDialogOpen, setIsDetailDialogOpen] = React.useState(false);
@@ -95,6 +97,12 @@ export default function Promotions() {
   const handleRowClick = (option: RedemptionOption) => {
     setSelectedPromotion(option);
     setIsDetailDialogOpen(true);
+  };
+  
+  const handleEditClick = (option: RedemptionOption) => {
+    setSelectedPromotion(option);
+    setIsDetailDialogOpen(false);
+    setIsEditDialogOpen(true);
   };
   
   const handleDeleteClick = (option: RedemptionOption) => {
@@ -247,7 +255,7 @@ export default function Promotions() {
     }
   };
 
-  const handlePromotionAdded = () => {
+  const handlePromotionAddedOrUpdated = () => {
     refreshData();
   };
 
@@ -333,7 +341,7 @@ export default function Promotions() {
                         Buat opsi penukaran poin loyalitas baru untuk pelanggan.
                       </DialogDescription>
                     </DialogHeader>
-                    <AddPromotionForm setDialogOpen={setIsAddDialogOpen} onPromotionAdded={handlePromotionAdded} />
+                    <AddPromotionForm setDialogOpen={setIsAddDialogOpen} onPromotionAdded={handlePromotionAddedOrUpdated} />
                   </DialogContent>
                 </Dialog>
               )}
@@ -373,7 +381,7 @@ export default function Promotions() {
       </div>
 
        {isAdmin && selectedPromotion && (
-          <Dialog open={isDetailDialogOpen} onOpenChange={() => setIsDetailDialogOpen(false)}>
+          <Dialog open={isDetailDialogOpen} onOpenChange={setIsDetailDialogOpen}>
               <DialogContent>
                   <DialogHeader>
                       <DialogTitle>{selectedPromotion.description}</DialogTitle>
@@ -404,12 +412,33 @@ export default function Promotions() {
                       </div>
                   </div>
                   <DialogFooter>
-                      <Button variant="destructive" onClick={() => handleDeleteClick(selectedPromotion)}>
-                          <Trash2 className="mr-2 h-4 w-4"/> Hapus Promo
-                      </Button>
+                    <div className='flex w-full justify-between'>
+                       <Button variant="outline" onClick={() => setIsDetailDialogOpen(false)}>Tutup</Button>
+                       <div className='flex gap-2'>
+                            <Button variant="outline" onClick={() => handleEditClick(selectedPromotion)}><Edit className="mr-2 h-4 w-4"/> Ubah</Button>
+                            <Button variant="destructive" onClick={() => handleDeleteClick(selectedPromotion)}>
+                                <Trash2 className="mr-2 h-4 w-4"/> Hapus
+                            </Button>
+                       </div>
+                    </div>
                   </DialogFooter>
               </DialogContent>
           </Dialog>
+      )}
+
+      {isAdmin && selectedPromotion && isEditDialogOpen && (
+        <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Ubah Promo</DialogTitle>
+            </DialogHeader>
+            <EditPromotionForm 
+              promotion={selectedPromotion} 
+              onPromotionUpdated={handlePromotionAddedOrUpdated}
+              setDialogOpen={setIsEditDialogOpen}
+            />
+          </DialogContent>
+        </Dialog>
       )}
 
       <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
