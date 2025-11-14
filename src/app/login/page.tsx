@@ -36,6 +36,7 @@ import { sendPasswordResetEmail } from 'firebase/auth';
 import { FirebaseError } from 'firebase/app';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
+import { ChikaIcon } from '@/components/icons/chika-icon';
 
 
 const loginSchema = z.object({
@@ -233,8 +234,8 @@ export default function LoginPage() {
             <Link href="/register" className="block">
                 <Card className="text-center hover:bg-muted">
                     <CardHeader>
-                        <CardTitle className="text-lg font-headline tracking-wider">APLIKASI PUJASERA</CardTitle>
-                        <CardDescription>Kelola banyak tenant dalam satu grup.</CardDescription>
+                        <CardTitle className="text-lg font-headline tracking-wider">Aplikasi Pujasera Terpisah</CardTitle>
+                        <CardDescription>Kelola banyak tenant dalam 1 grup dengan sistem pembayaran terpisah by tenant.</CardDescription>
                     </CardHeader>
                     <CardContent className="flex justify-center items-center p-4">
                         <Building className="h-12 w-12 text-primary" />
@@ -244,11 +245,11 @@ export default function LoginPage() {
             <Link href="/register" className="block">
                 <Card className="text-center hover:bg-muted">
                     <CardHeader>
-                        <CardTitle className="text-lg font-headline tracking-wider">APLIKASI POS F&B</CardTitle>
+                        <CardTitle className="text-lg font-headline tracking-wider">APLIKASI POS F&amp;B</CardTitle>
                         <CardDescription>Untuk kafe, resto, atau cloud kitchen.</CardDescription>
                     </CardHeader>
                     <CardContent className="flex justify-center items-center p-4">
-                        <ChefHat className="h-12 w-12 text-primary" />
+                        <ChikaIcon className="h-12 w-12 text-primary" />
                     </CardContent>
                 </Card>
             </Link>
@@ -290,7 +291,7 @@ export default function LoginPage() {
                         <div>
                             <RadioGroupItem value="F&B" id="type-fnb" className="peer sr-only" />
                             <Label htmlFor="type-fnb" className="flex items-center justify-center gap-2 rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary cursor-pointer">
-                                <ChefHat className="h-5 w-5"/> F&amp;B
+                                <ChikaIcon className="h-5 w-5"/> F&amp;B
                             </Label>
                         </div>
                         <div>
