@@ -228,18 +228,42 @@ export default function LoginPage() {
                 </Button>
             </CardContent>
         </Card>
-
-        <Link href="https://pos.era5758.co.id" target="_blank" className="block">
-            <Card className="text-center hover:bg-muted">
-                <CardHeader>
-                    <CardTitle className="text-lg font-headline tracking-wider">APLIKASI POS RETAIL</CardTitle>
-                    <CardDescription>Coba aplikasi POS retail kami yang baru!</CardDescription>
-                </CardHeader>
-                <CardContent className="flex justify-center items-center p-4">
-                    <Store className="h-12 w-12 text-primary" />
-                </CardContent>
-            </Card>
-        </Link>
+        
+        <div className="space-y-4">
+            <Link href="/register" className="block">
+                <Card className="text-center hover:bg-muted">
+                    <CardHeader>
+                        <CardTitle className="text-lg font-headline tracking-wider">APLIKASI PUJASERA</CardTitle>
+                        <CardDescription>Kelola banyak tenant dalam satu grup.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex justify-center items-center p-4">
+                        <Building className="h-12 w-12 text-primary" />
+                    </CardContent>
+                </Card>
+            </Link>
+            <Link href="/register" className="block">
+                <Card className="text-center hover:bg-muted">
+                    <CardHeader>
+                        <CardTitle className="text-lg font-headline tracking-wider">APLIKASI POS F&B</CardTitle>
+                        <CardDescription>Untuk kafe, resto, atau cloud kitchen.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex justify-center items-center p-4">
+                        <ChefHat className="h-12 w-12 text-primary" />
+                    </CardContent>
+                </Card>
+            </Link>
+            <Link href="https://pos.era5758.co.id" target="_blank" className="block">
+                <Card className="text-center hover:bg-muted">
+                    <CardHeader>
+                        <CardTitle className="text-lg font-headline tracking-wider">APLIKASI POS RETAIL</CardTitle>
+                        <CardDescription>Coba aplikasi POS retail kami yang baru!</CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex justify-center items-center p-4">
+                        <Store className="h-12 w-12 text-primary" />
+                    </CardContent>
+                </Card>
+            </Link>
+        </div>
 
 
       </div>
