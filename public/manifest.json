@@ -1,6 +1,6 @@
 {
   "name": "Pujasera Chika AI",
-  "short_name": "Chika POS",
+  "short_name": "Pujasera POS",
   "description": "Aplikasi Kasir untuk Pujasera & Grup UMKM F&B",
   "start_url": "/dashboard",
   "display": "standalone",
